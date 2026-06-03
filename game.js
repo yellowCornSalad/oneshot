@@ -27,6 +27,8 @@ const DART_CAP   = 12;                        // 최대 보유 다트 수
 const COMBO_PER_MULT = 3;                     // 콤보 N개마다 점수 배수 +1
 const MULT_CAP   = 12;
 const MAX_STUCK  = 7;                         // 보드에 남겨두는 다트 수
+const FIRE_COMBO = 6;                         // 이 콤보부터 🔥 ON FIRE
+const FIRE_BONUS = 2;                         // ON FIRE 시 점수 추가 배수
 
 // 점수 링: [중심에서의 최대 반지름 비율, 점수, 색]  — 안쪽부터
 const RINGS = [
@@ -66,6 +68,8 @@ const panelOver = document.getElementById('panel-over');
 const panelBoard = document.getElementById('panel-board');
 const elFinalScore = document.getElementById('final-score');
 const elFinalBest = document.getElementById('final-best');
+const elDanger = document.getElementById('danger');
+const elOverGoal = document.getElementById('over-goal');
 
 // ---------- 상태 ----------
 const state = {
@@ -89,6 +93,13 @@ const state = {
   waves: [],          // BULL 충격파 링
   glow: null,         // BULL 골드 섬광
   shake: 0,
+  time: 0,            // 누적 시간(펄스 연출)
+  onFire: false,      // 🔥 ON FIRE 상태
+  fireHeat: 0,        // 0~1 콤보 고조 강도(연출)
+  coolT: 0,           // 콤보 끊긴 직후 식는 연출 타이머
+  emberT: 0,          // 잔불 스폰 누적시간
+  startBest: 0,       // 이번 판 시작 시점 최고기록(신기록 판정)
+  recordHit: false,   // 이번 판 신기록 연출 했는지
 };
 
 // ---------- 기하 (W,H 로부터 매 프레임 계산 → 리사이즈에 강함) ----------
@@ -139,7 +150,9 @@ function multiplier() { return Math.min(MULT_CAP, 1 + Math.floor(state.combo / C
 function resetStats() {
   state.score = 0; state.combo = 0; state.darts = DARTS0; state.throws = 0;
   state.stuck = []; state.parts = []; state.pops = []; state.waves = []; state.glow = null; state.shake = 0;
+  state.onFire = false; state.fireHeat = 0; state.coolT = 0; state.emberT = 0; state.recordHit = false;
   state.dart = null;
+  if (elDanger) elDanger.classList.remove('on');
   updateHud();
 }
 function resetGame() {
@@ -151,6 +164,7 @@ function resetGame() {
 function startGame() {
   if (state.mode === 'playing') return;
   resetStats();
+  state.startBest = state.best;   // 이번 판 동안 깰 목표(신기록 판정)
   state.mode = 'playing';
   hidePanels();
   newThrow();
@@ -182,35 +196,57 @@ function resolveHit() {
   state.darts--;                      // 한 발 소모
 
   if (val > 0) {
+    const wasFire = state.onFire;
     state.combo++;
-    const mult = multiplier();
-    const pts = val * mult;
-    state.score += pts;
+    state.onFire = state.combo >= FIRE_COMBO;
+    const justFired = state.onFire && !wasFire;
     const isBull = val === 100;
+    const nearBull = !isBull && frac < 0.135;   // BULL 을 아슬하게 빗나감
+
+    const baseMult = multiplier();
+    const effMult = baseMult * (state.onFire ? FIRE_BONUS : 1);   // ON FIRE면 추가 배수
+    const pts = val * effMult;
+    state.score += pts;
     addPop(d.x1, d.y1, '+' + pts, isBull ? '#ffd35e' : '#ffffff', isBull);
 
-    const rf = refillFor(val);          // 다트 보충
+    const rf = refillFor(val);          // 다트 보충 (BULL만 +2)
     if (rf > 0) {
       state.darts = Math.min(DART_CAP, state.darts + rf);
       addPop(d.x1, d.y1 - 30, '+' + rf + ' 다트', '#46d369', false);
     }
     addStuck(d.x1, d.y1);
 
-    if (isBull) {
-      flashText(mult > 1 ? '🔥 BULLSEYE ×' + mult + ' 🔥' : '🔥 BULLSEYE 🔥');
-      bullImpact(d.x1, d.y1);           // 화르륵 대폭발
-      playBull();
-    } else {
-      state.shake = Math.max(state.shake, 0.12);
-      burst(d.x1, d.y1, colorFor(frac), 12);
-      playHit(val);
+    // 신기록: 이번 판 처음으로 시작 시점 최고기록 돌파 → 보너스 다트 +1
+    const justRecord = !state.recordHit && state.startBest > 0 && state.score > state.startBest;
+    if (justRecord) {
+      state.recordHit = true;
+      state.darts = Math.min(DART_CAP, state.darts + 1);
+      addPop(d.x1, d.y1 - 56, '신기록 +1🎯', '#ffd35e', false);
     }
+
+    if (isBull) { bullImpact(d.x1, d.y1); playBull(); }
+    else { state.shake = Math.max(state.shake, 0.12); burst(d.x1, d.y1, colorFor(frac), justFired ? 22 : 12); playHit(val); }
+    if (justFired) playFire();
+    if (justRecord) playRecord();
+
+    // 플래시 우선순위: 신기록 > BULL > ON FIRE 진입 > 아깝다
+    let flash = '';
+    if (justRecord) flash = '🎉 신기록!';
+    else if (isBull) flash = effMult > 1 ? '🔥 BULLSEYE ×' + effMult + ' 🔥' : '🔥 BULLSEYE 🔥';
+    else if (justFired) flash = '🔥 ON FIRE 🔥';
+    else if (nearBull) flash = '아깝다! 거의 BULL!';
+    if (flash) flashText(flash);
   } else {
+    const wasFire = state.onFire;
+    const nearMiss = frac < 1.18;       // 보드 바로 바깥 = 아슬아슬
     state.combo = 0;
-    addPop(d.x1, d.y1, 'MISS', '#e5484d', false);
+    state.onFire = false;
+    addPop(d.x1, d.y1, nearMiss ? '아깝다!' : 'MISS', '#e5484d', false);
     burst(d.x1, d.y1, '#e5484d', 8);
     state.shake = Math.max(state.shake, 0.22);
     playMiss();
+    if (wasFire) { state.coolT = 0.6; flashText('💨 콤보 종료'); playCool(); }
+    else if (nearMiss) flashText('아깝다!!');
   }
 
   // 다트 수 변화 펄스
@@ -218,6 +254,7 @@ function resolveHit() {
   if (net > 0) pulseDarts('gain'); else if (net < 0) pulseDarts('loss');
 
   if (state.score > state.best) { state.best = state.score; saveBest(state.best); }
+  if (state.darts === 1 && prevDarts !== 1) playTension();   // 막판(마지막 1발) 진입
   updateHud();
 
   state.dart = null;
@@ -228,12 +265,30 @@ function resolveHit() {
 function gameOver() {
   state.mode = 'over';
   state.shake = 0.42;
+  if (elDanger) elDanger.classList.remove('on');
+  if (elOverGoal) {
+    if (state.startBest > 0 && state.score > state.startBest) elOverGoal.textContent = '🎉 자체 최고기록 경신!';
+    else if (state.startBest > 0) elOverGoal.textContent = '최고기록까지 단 ' + (state.startBest - state.score) + '점!';
+    else elOverGoal.textContent = '첫 기록! 순위에 올려보세요 🏆';
+  }
   showPanel('over');
   if (window.Leaderboard) window.Leaderboard.onOver();
 }
 
 // ---------- 업데이트 ----------
 function update(dt) {
+  state.time += dt;
+  const gg = geom();
+  // 콤보 고조 강도 — 콤보 기반 목표치로 부드럽게 이징
+  const heatTarget = state.mode === 'playing' ? clamp(state.combo / FIRE_COMBO, 0, 1) : 0;
+  state.fireHeat += (heatTarget - state.fireHeat) * Math.min(1, dt * 6);
+  if (state.coolT > 0) state.coolT = Math.max(0, state.coolT - dt);
+  // ON FIRE 잔불 솟기
+  if (state.mode === 'playing' && state.onFire) {
+    state.emberT += dt;
+    while (state.emberT > 0.05) { state.emberT -= 0.05; spawnEmber(gg); }
+  }
+
   if (state.mode === 'playing') {
     if (state.phase === 'aim') {
       state.aimPhase += aimRate() * dt;
@@ -329,6 +384,19 @@ function drawBackground(g) {
   sp.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = sp;
   ctx.fillRect(0, 0, W, H);
+  // 🔥 콤보 고조 시 따뜻한 화염 틴트 (ON FIRE 면 맥박)
+  if (state.fireHeat > 0.01) {
+    const h = state.fireHeat;
+    const pulse = state.onFire ? (0.82 + 0.18 * Math.sin(state.time * 9)) : 1;
+    const fg = ctx.createRadialGradient(g.cx, g.cy, g.R * 0.2, g.cx, g.cy, g.R * 2.6);
+    fg.addColorStop(0, 'rgba(255,140,40,' + (0.24 * h * pulse) + ')');
+    fg.addColorStop(0.5, 'rgba(255,90,30,' + (0.13 * h * pulse) + ')');
+    fg.addColorStop(1, 'rgba(255,80,20,0)');
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = fg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+  }
   // 바닥 발사대 옅은 빛 (대기 중인 다트가 어둠에 묻히지 않게)
   const r = ctx.createRadialGradient(g.launchX, g.launchY, 4, g.launchX, g.launchY, g.R * 1.05);
   r.addColorStop(0, 'rgba(255,255,255,.06)');
@@ -359,6 +427,21 @@ function drawBoard(g) {
   ctx.arc(g.cx - g.R * 0.025, g.cy - g.R * 0.025, g.R * 0.045, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(255,255,255,.35)';
   ctx.fill();
+
+  // 🔥 콤보 고조 시 불타는 테두리
+  if (state.fireHeat > 0.01) {
+    const h = state.fireHeat;
+    const pulse = state.onFire ? (0.7 + 0.3 * Math.sin(state.time * 10)) : 1;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = 'rgba(255,150,40,' + (0.55 * h * pulse) + ')';
+    ctx.lineWidth = 4 + 11 * h;
+    ctx.beginPath(); ctx.arc(g.cx, g.cy, g.R * 1.07, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,224,130,' + (0.5 * h * pulse) + ')';
+    ctx.lineWidth = 2 + 3 * h;
+    ctx.beginPath(); ctx.arc(g.cx, g.cy, g.R * 1.05, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawCenterGuide(g) {
@@ -673,6 +756,16 @@ function flameBurst(x, y) {
   }
 }
 
+// ON FIRE 중 보드에서 솟아오르는 잔불 한 톨
+function spawnEmber(g) {
+  state.parts.push({
+    x: g.cx + rand(-g.R, g.R), y: g.cy + g.R * rand(0.0, 1.0),
+    vx: rand(-22, 22), vy: rand(-130, -55),
+    life: rand(0.5, 1.1), max: 1.1, size: rand(1.5, 3.5),
+    color: FLAME[(Math.random() * 4) | 0], flame: true,
+  });
+}
+
 // ---------- 메인 루프 ----------
 let last = 0;
 function frame(t) {
@@ -697,9 +790,16 @@ function pulseDarts(kind) {
 function updateHud() {
   elScore.textContent = state.score;
   const m = multiplier();
-  elCombo.textContent = state.combo > 1 ? ('🔥 ' + state.combo + ' COMBO' + (m > 1 ? '  ×' + m : '')) : '';
+  if (state.onFire) {
+    elCombo.textContent = '🔥 ON FIRE  ×' + (m * FIRE_BONUS) + '  ·  ' + state.combo + ' COMBO';
+    elCombo.classList.add('fire');
+  } else {
+    elCombo.textContent = state.combo > 1 ? ('🔥 ' + state.combo + ' COMBO' + (m > 1 ? '  ×' + m : '')) : '';
+    elCombo.classList.remove('fire');
+  }
   elBest.textContent = 'BEST ' + state.best;
   elDarts.innerHTML = '<span class="dicon">🎯</span><span class="dnum">' + state.darts + '</span>';
+  if (elDanger) elDanger.classList.toggle('on', state.mode === 'playing' && state.darts === 1);
 }
 function showPanel(which) {
   panelBoard.classList.add('hidden');
@@ -803,6 +903,10 @@ function playBull() {
   });
 }
 function playMiss() { blip(150, 0.32, 'sawtooth', 0.18); blip(95, 0.42, 'sawtooth', 0.12); }
+function playFire() { blip(523, 0.12, 'square', 0.12); blip(784, 0.18, 'square', 0.10); noiseBurst(0.22, 0.12, 2600); }
+function playCool() { blip(420, 0.30, 'sine', 0.14); setTimeout(function () { blip(250, 0.45, 'sine', 0.12); }, 90); }
+function playRecord() { [0, 4, 7, 12].forEach(function (st, i) { setTimeout(function () { blip(660 * Math.pow(2, st / 12), 0.15, 'triangle', 0.13); }, i * 70); }); }
+function playTension() { blip(92, 0.18, 'sine', 0.20); setTimeout(function () { blip(92, 0.20, 'sine', 0.17); }, 260); }
 
 // ---------- 입력 ----------
 function onPress() {
