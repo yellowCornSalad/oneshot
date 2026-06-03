@@ -292,6 +292,13 @@ html, body {
   background: rgba(255,211,94,.18);
   box-shadow: inset 0 0 0 1.5px var(--gold);
 }
+.board-gap {
+  text-align: center;
+  opacity: .4;
+  font-size: 16px;
+  letter-spacing: 5px;
+  padding: 3px 0 1px;
+}
 .board-empty, .board-loading {
   padding: 28px 10px;
   font-size: 14px;
