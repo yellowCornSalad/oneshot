@@ -155,6 +155,16 @@
     openBoard(null);
   });
 
+  // 게임 도중 우상단 🏆 버튼: 플레이 중에도 랭킹을 볼 수 있게
+  const inGameBoardBtn = document.getElementById('board-btn');
+  if (inGameBoardBtn) {
+    inGameBoardBtn.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      e.stopPropagation();   // 캔버스 던지기 입력으로 번지지 않게
+      openBoard(null);
+    });
+  }
+
   // ---------- 게임(game.js)에서 호출하는 훅 ----------
   window.Leaderboard = {
     ready: ready,

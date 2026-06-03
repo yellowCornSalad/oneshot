@@ -125,6 +125,23 @@ html, body {
 }
 #mute:active { transform: scale(.92); }
 
+/* ---------- 리더보드 버튼 (게임 중) ---------- */
+#board-btn {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top));
+  right: 64px;
+  width: 42px; height: 42px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255,255,255,.08);
+  color: var(--ink);
+  font-size: 18px;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+#board-btn:active { transform: scale(.92); }
+
 /* ---------- BULLSEYE 플래시 ---------- */
 #flash {
   position: absolute;
