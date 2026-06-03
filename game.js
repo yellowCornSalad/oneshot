@@ -66,6 +66,7 @@ const elMute = document.getElementById('mute');
 const panelStart = document.getElementById('panel-start');
 const panelOver = document.getElementById('panel-over');
 const panelBoard = document.getElementById('panel-board');
+const panelWall = document.getElementById('panel-wall');
 const elFinalScore = document.getElementById('final-score');
 const elFinalBest = document.getElementById('final-best');
 const elDanger = document.getElementById('danger');
@@ -803,6 +804,7 @@ function updateHud() {
 }
 function showPanel(which) {
   panelBoard.classList.add('hidden');
+  if (panelWall) panelWall.classList.add('hidden');
   if (which === 'start') {
     panelStart.classList.remove('hidden');
     panelOver.classList.add('hidden');
@@ -817,6 +819,7 @@ function hidePanels() {
   panelStart.classList.add('hidden');
   panelOver.classList.add('hidden');
   panelBoard.classList.add('hidden');
+  if (panelWall) panelWall.classList.add('hidden');
 }
 function flashText(txt) {
   elFlash.textContent = txt;

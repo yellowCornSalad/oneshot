@@ -144,7 +144,7 @@
       openWall();
     });
   }
-  if (wallClose) wallClose.addEventListener('click', function () { if (window.Oneshot) window.Oneshot.toStart(); });
+  if (wallClose) wallClose.addEventListener('click', function () { panelWall.classList.add('hidden'); if (window.Oneshot) window.Oneshot.toStart(); });
   if (sendBtn) sendBtn.addEventListener('click', send);
   if (wallInput) wallInput.addEventListener('keydown', function (e) { if (e.code === 'Enter') { e.preventDefault(); send(); } });
 
