@@ -1,0 +1,870 @@
+'use strict';
+
+/* =========================================================================
+ * ONESHOT (원샷) — 한 손가락 다트
+ * (1) 누르면 좌우로 왔다갔다하던 "조준선"이 그 자리에서 멈추고
+ * (2) 누르고 있는 동안 "파워 게이지"가 위아래로 차오르며
+ * (3) 손을 떼는 순간의 게이지 높이로 다트가 날아간다.
+ *
+ * 🎯 다트 5발로 시작. 한 발 던질 때마다 1개 소모.
+ *    안쪽 링(25점)·레드(50점)·BULL(100점)을 맞히면 발을 되돌려준다.
+ *    → 잘 맞힐수록 계속 쏠 수 있고, 다 떨어지면 게임 오버.
+ * 🔥 정중앙 BULL 적중 = 노랑 불꽃 화르륵! 충격파 + 섬광 + 묵직한 임팩트.
+ *
+ * 의존성 없음 — index.html 을 브라우저로 열기만 하면 실행된다.
+ * ========================================================================= */
+
+// ---------- 튜닝 상수 ----------
+const AIM_RATE0 = 1.05, AIM_RATE1 = 2.15;   // 좌우 조준선 속도(주기/초): 시작 → 최대
+const POW_RATE0 = 1.20, POW_RATE1 = 2.45;   // 상하 파워 게이지 속도
+const RAMP_SCORE = 1600;                     // 이 점수에서 난이도 최대치
+const WIND_FROM  = 300;                      // 이 점수부터 바람 등장
+const WIND_MAX   = 0.46;                      // 바람 최대 세기(보드 반지름 비율)
+const FLY_DUR    = 0.32;                      // 다트 비행 시간(초)
+const RESULT_DUR = 0.34;                      // 결과 보여주는 쿨다운(초)
+const DARTS0     = 5;                         // 시작 다트 수
+const DART_CAP   = 12;                        // 최대 보유 다트 수
+const COMBO_PER_MULT = 3;                     // 콤보 N개마다 점수 배수 +1
+const MULT_CAP   = 12;
+const MAX_STUCK  = 7;                         // 보드에 남겨두는 다트 수
+
+// 점수 링: [중심에서의 최대 반지름 비율, 점수, 색]  — 안쪽부터
+const RINGS = [
+  [0.09, 100, '#ffd35e'], // BULL (골드)
+  [0.20,  50, '#e5484d'], // 레드
+  [0.40,  25, '#2c3a4a'], // 다크
+  [0.62,  10, '#efe6cf'], // 크림
+  [1.00,   5, '#243244'], // 다크 (가장 바깥)
+];
+// 다트 보충: 정중앙 BULL 적중에만 +2. 그 외엔 보충 없음(매 던지기 -1).
+function refillFor(val) { return val === 100 ? 2 : 0; }
+
+// ---------- 캔버스 ----------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+
+function resize() {
+  const r = canvas.getBoundingClientRect();
+  W = r.width; H = r.height;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+
+// ---------- DOM ----------
+const elScore = document.getElementById('score');
+const elCombo = document.getElementById('combo');
+const elBest = document.getElementById('best');
+const elDarts = document.getElementById('darts');
+const elFlash = document.getElementById('flash');
+const elMute = document.getElementById('mute');
+const panelStart = document.getElementById('panel-start');
+const panelOver = document.getElementById('panel-over');
+const panelBoard = document.getElementById('panel-board');
+const elFinalScore = document.getElementById('final-score');
+const elFinalBest = document.getElementById('final-best');
+
+// ---------- 상태 ----------
+const state = {
+  mode: 'ready',      // ready | playing | over
+  phase: 'aim',       // aim(좌우 조준) | power(상하 게이지) | fly(비행) | result(결과)
+  score: 0,
+  best: loadBest(),
+  combo: 0,
+  darts: DARTS0,
+  throws: 0,
+  aimPhase: 0,        // 좌우 조준선 위상
+  powPhase: 0,        // 상하 게이지 위상
+  lockX: 0,           // 멈춘 가로 위치(px)
+  lockP: 0.5,         // 멈춘 게이지 값(0~1)
+  windRaw: 0,         // 이번 던지기 바람 방향(-1~1)
+  dart: null,         // 비행 중인 다트
+  resultT: 0,
+  stuck: [],          // 보드에 꽂힌 다트들
+  parts: [],          // 파티클
+  pops: [],           // 점수 팝업
+  waves: [],          // BULL 충격파 링
+  glow: null,         // BULL 골드 섬광
+  shake: 0,
+};
+
+// ---------- 기하 (W,H 로부터 매 프레임 계산 → 리사이즈에 강함) ----------
+function geom() {
+  const R = Math.min(W * 0.40, H * 0.26);
+  return {
+    R: R,
+    cx: W / 2,
+    cy: H * 0.37,
+    sweepHalf: R * 1.06,        // 조준선이 좌우로 오가는 반폭
+    launchX: W / 2,
+    launchY: H * 0.93,          // 다트가 출발하는 지점(화면 하단)
+    gx: W - 22,                 // 파워 게이지 바 x
+  };
+}
+
+// 삼각파: 위상 ph → 0..1..0 핑퐁
+function tri(ph) { const m = ((ph % 2) + 2) % 2; return m <= 1 ? m : 2 - m; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function rand(a, b) { return a + Math.random() * (b - a); }
+
+// 난이도 진행도 0~1
+function diff() { return clamp(state.score / RAMP_SCORE, 0, 1); }
+function aimRate() { return lerp(AIM_RATE0, AIM_RATE1, diff()); }
+function powRate() { return lerp(POW_RATE0, POW_RATE1, diff()); }
+function windAmp(g) {
+  if (state.score < WIND_FROM) return 0;
+  const t = clamp((state.score - WIND_FROM) / (RAMP_SCORE - WIND_FROM), 0, 1);
+  return t * WIND_MAX * g.R;
+}
+
+function currentSweepX(g) { return g.cx + (tri(state.aimPhase) * 2 - 1) * g.sweepHalf; }
+function currentP() { return tri(state.powPhase); }
+
+// 거리비율 → 점수 / 색
+function scoreFor(frac) {
+  for (let i = 0; i < RINGS.length; i++) if (frac <= RINGS[i][0]) return RINGS[i][1];
+  return 0; // 보드 밖 = 빗나감
+}
+function colorFor(frac) {
+  for (let i = 0; i < RINGS.length; i++) if (frac <= RINGS[i][0]) return RINGS[i][2];
+  return '#888';
+}
+function multiplier() { return Math.min(MULT_CAP, 1 + Math.floor(state.combo / COMBO_PER_MULT)); }
+
+// ---------- 게임 흐름 ----------
+function resetStats() {
+  state.score = 0; state.combo = 0; state.darts = DARTS0; state.throws = 0;
+  state.stuck = []; state.parts = []; state.pops = []; state.waves = []; state.glow = null; state.shake = 0;
+  state.dart = null;
+  updateHud();
+}
+function resetGame() {
+  state.mode = 'ready';
+  state.phase = 'aim';
+  resetStats();
+  showPanel('start');
+}
+function startGame() {
+  if (state.mode === 'playing') return;
+  resetStats();
+  state.mode = 'playing';
+  hidePanels();
+  newThrow();
+}
+function newThrow() {
+  state.phase = 'aim';
+  state.windRaw = state.score < WIND_FROM ? 0 : rand(-1, 1);
+}
+
+function launchDart() {
+  const g = geom();
+  const tx = clamp(state.lockX + state.windRaw * windAmp(g), 8, W - 8);
+  const ty = g.cy + (0.5 - state.lockP) * 2 * g.R;
+  const ang = Math.atan2(ty - g.launchY, tx - g.launchX) + Math.PI / 2; // 진행 방향
+  state.dart = { x: g.launchX, y: g.launchY, x0: g.launchX, y0: g.launchY, x1: tx, y1: ty, t: 0, ang: ang };
+  state.phase = 'fly';
+  playThrow();
+}
+
+function resolveHit() {
+  const g = geom();
+  const d = state.dart;
+  const dist = Math.hypot(d.x1 - g.cx, d.y1 - g.cy);
+  const frac = dist / g.R;
+  const val = scoreFor(frac);
+  state.throws++;
+
+  const prevDarts = state.darts;
+  state.darts--;                      // 한 발 소모
+
+  if (val > 0) {
+    state.combo++;
+    const mult = multiplier();
+    const pts = val * mult;
+    state.score += pts;
+    const isBull = val === 100;
+    addPop(d.x1, d.y1, '+' + pts, isBull ? '#ffd35e' : '#ffffff', isBull);
+
+    const rf = refillFor(val);          // 다트 보충
+    if (rf > 0) {
+      state.darts = Math.min(DART_CAP, state.darts + rf);
+      addPop(d.x1, d.y1 - 30, '+' + rf + ' 다트', '#46d369', false);
+    }
+    addStuck(d.x1, d.y1);
+
+    if (isBull) {
+      flashText(mult > 1 ? '🔥 BULLSEYE ×' + mult + ' 🔥' : '🔥 BULLSEYE 🔥');
+      bullImpact(d.x1, d.y1);           // 화르륵 대폭발
+      playBull();
+    } else {
+      state.shake = Math.max(state.shake, 0.12);
+      burst(d.x1, d.y1, colorFor(frac), 12);
+      playHit(val);
+    }
+  } else {
+    state.combo = 0;
+    addPop(d.x1, d.y1, 'MISS', '#e5484d', false);
+    burst(d.x1, d.y1, '#e5484d', 8);
+    state.shake = Math.max(state.shake, 0.22);
+    playMiss();
+  }
+
+  // 다트 수 변화 펄스
+  const net = state.darts - prevDarts;
+  if (net > 0) pulseDarts('gain'); else if (net < 0) pulseDarts('loss');
+
+  if (state.score > state.best) { state.best = state.score; saveBest(state.best); }
+  updateHud();
+
+  state.dart = null;
+  state.phase = 'result';
+  state.resultT = 0;
+}
+
+function gameOver() {
+  state.mode = 'over';
+  state.shake = 0.42;
+  showPanel('over');
+  if (window.Leaderboard) window.Leaderboard.onOver();
+}
+
+// ---------- 업데이트 ----------
+function update(dt) {
+  if (state.mode === 'playing') {
+    if (state.phase === 'aim') {
+      state.aimPhase += aimRate() * dt;
+    } else if (state.phase === 'power') {
+      state.powPhase += powRate() * dt;
+      setChargePitch(currentP());
+    } else if (state.phase === 'fly') {
+      const d = state.dart;
+      d.t += dt;
+      const e = clamp(d.t / FLY_DUR, 0, 1);
+      d.x = lerp(d.x0, d.x1, e);
+      d.y = lerp(d.y0, d.y1, e) - Math.sin(e * Math.PI) * 46; // 살짝 포물선
+      if (e >= 1) resolveHit();
+    } else if (state.phase === 'result') {
+      state.resultT += dt;
+      if (state.resultT >= RESULT_DUR) {
+        if (state.darts <= 0) gameOver();
+        else newThrow();
+      }
+    }
+  }
+
+  // 파티클 (일반 + 불꽃)
+  for (let i = state.parts.length - 1; i >= 0; i--) {
+    const p = state.parts[i];
+    if (p.flame) {
+      p.vy += 90 * dt;            // 약한 중력 → 솟았다가 천천히
+      p.vx *= (1 - 1.8 * dt);     // 공기저항
+      p.vy *= (1 - 0.5 * dt);
+    } else {
+      p.vy += 520 * dt;
+    }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.life -= dt;
+    if (p.life <= 0) state.parts.splice(i, 1);
+  }
+  // 충격파
+  for (let i = state.waves.length - 1; i >= 0; i--) {
+    state.waves[i].t += dt;
+    if (state.waves[i].t >= state.waves[i].life) state.waves.splice(i, 1);
+  }
+  // 섬광
+  if (state.glow) { state.glow.t += dt; if (state.glow.t >= state.glow.life) state.glow = null; }
+  // 점수 팝업
+  for (let i = state.pops.length - 1; i >= 0; i--) {
+    const p = state.pops[i];
+    p.t += dt; p.y -= 34 * dt;
+    if (p.t >= p.life) state.pops.splice(i, 1);
+  }
+  // 화면 흔들림 감쇠
+  if (state.shake > 0) state.shake = Math.max(0, state.shake - dt);
+}
+
+// ---------- 렌더 ----------
+function render() {
+  const g = geom();
+  ctx.clearRect(0, 0, W, H);
+  drawBackground(g);
+
+  // 흔들림: "장면"(보드/다트/파티클)만 흔든다. 게이지/HUD 는 고정.
+  const amp = state.shake > 0 ? state.shake * 18 : 0;
+  const ox = amp ? rand(-amp, amp) : 0;
+  const oy = amp ? rand(-amp, amp) : 0;
+
+  ctx.save();
+  ctx.translate(ox, oy);
+  drawBoard(g);
+  drawCenterGuide(g);
+  drawStuck(g);
+  drawGlow();          // BULL 골드 섬광 (가산)
+  drawWaves();         // BULL 충격파 (가산)
+  drawAimAndPower(g);
+  drawReadyDart(g);
+  drawFlyingDart(g);
+  drawParticles();
+  drawPops();
+  ctx.restore();
+
+  drawGauge(g);   // 우측 파워 게이지 (고정)
+  drawWind(g);    // 바람 표시 (고정)
+}
+
+function drawBackground(g) {
+  // 순검정 바탕
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  // 다트보드 뒤 스포트라이트 (살짝 위에서 비추는 느낌)
+  const sx = g.cx, sy = g.cy - g.R * 0.18;
+  const sp = ctx.createRadialGradient(sx, sy, g.R * 0.15, sx, sy, g.R * 2.7);
+  sp.addColorStop(0, 'rgba(124,144,178,.22)');
+  sp.addColorStop(0.45, 'rgba(64,78,104,.10)');
+  sp.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = sp;
+  ctx.fillRect(0, 0, W, H);
+  // 바닥 발사대 옅은 빛 (대기 중인 다트가 어둠에 묻히지 않게)
+  const r = ctx.createRadialGradient(g.launchX, g.launchY, 4, g.launchX, g.launchY, g.R * 1.0);
+  r.addColorStop(0, 'rgba(255,255,255,.045)');
+  r.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = r;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawBoard(g) {
+  ctx.beginPath();
+  ctx.arc(g.cx, g.cy, g.R * 1.07, 0, Math.PI * 2);
+  ctx.fillStyle = '#11161f';
+  ctx.fill();
+  for (let i = RINGS.length - 1; i >= 0; i--) {
+    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, g.R * RINGS[i][0], 0, Math.PI * 2);
+    ctx.fillStyle = RINGS[i][2];
+    ctx.fill();
+  }
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(201,168,96,.55)';
+  for (let i = 0; i < RINGS.length; i++) {
+    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, g.R * RINGS[i][0], 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(g.cx - g.R * 0.025, g.cy - g.R * 0.025, g.R * 0.045, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  ctx.fill();
+}
+
+function drawCenterGuide(g) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,.12)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 6]);
+  ctx.beginPath();
+  ctx.moveTo(g.cx, g.cy - g.R * 1.07); ctx.lineTo(g.cx, g.cy + g.R * 1.07);
+  ctx.moveTo(g.cx - g.R * 1.07, g.cy); ctx.lineTo(g.cx + g.R * 1.07, g.cy);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAimAndPower(g) {
+  if (state.mode !== 'playing') return;
+  const top = g.cy - g.R * 1.07, bot = g.cy + g.R * 1.07;
+  const left = g.cx - g.R * 1.07, right = g.cx + g.R * 1.07;
+
+  if (state.phase === 'aim') {
+    const x = currentSweepX(g);
+    ctx.strokeStyle = 'rgba(255,255,255,.85)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke();
+    drawTriMarker(x, top - 6, true);
+  } else if (state.phase === 'power') {
+    const p = currentP();
+    const y = g.cy + (0.5 - p) * 2 * g.R;
+    ctx.strokeStyle = 'rgba(255,255,255,.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(state.lockX, top); ctx.lineTo(state.lockX, bot); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,211,94,.95)';
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+    ctx.fillStyle = '#ffd35e';
+    ctx.beginPath(); ctx.arc(state.lockX, y, 4.5, 0, Math.PI * 2); ctx.fill();
+    drawTriMarker(state.lockX, top - 6, true);
+  }
+}
+
+function drawTriMarker(x, y, down) {
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(x, y + (down ? 8 : -8));
+  ctx.lineTo(x - 6, y);
+  ctx.lineTo(x + 6, y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawReadyDart(g) {
+  if (state.mode !== 'playing') return;
+  if (state.phase === 'aim' || state.phase === 'power') {
+    drawDart(g.launchX, g.launchY, 1, 0, state.phase === 'power');
+  }
+}
+
+function drawFlyingDart(g) {
+  if (state.phase !== 'fly' || !state.dart) return;
+  const d = state.dart;
+  const e = clamp(d.t / FLY_DUR, 0, 1);
+  drawDart(d.x, d.y, lerp(1, 0.5, e), d.ang, false);
+}
+
+function drawDart(x, y, s, ang, glow) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(ang);
+  if (glow) { ctx.shadowColor = 'rgba(255,211,94,.8)'; ctx.shadowBlur = 14; }
+  ctx.strokeStyle = '#d7dde6';
+  ctx.lineWidth = 3.4 * s;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, 20 * s); ctx.lineTo(0, -14 * s); ctx.stroke();
+  ctx.fillStyle = '#aab3c0';
+  ctx.beginPath();
+  ctx.moveTo(0, -22 * s); ctx.lineTo(-3 * s, -14 * s); ctx.lineTo(3 * s, -14 * s);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#e5484d';
+  ctx.beginPath();
+  ctx.moveTo(0, 10 * s); ctx.lineTo(-8 * s, 24 * s); ctx.lineTo(0, 20 * s); ctx.lineTo(8 * s, 24 * s);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawStuck(g) {
+  for (let i = 0; i < state.stuck.length; i++) {
+    const s = state.stuck[i];
+    const fade = 0.4 + 0.6 * ((i + 1) / state.stuck.length);
+    ctx.globalAlpha = fade;
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(0.5);
+    ctx.strokeStyle = '#cfd6df';
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 13); ctx.stroke();
+    ctx.fillStyle = '#e5484d';
+    ctx.beginPath();
+    ctx.moveTo(0, 7); ctx.lineTo(-5, 16); ctx.lineTo(0, 13); ctx.lineTo(5, 16);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawParticles() {
+  // 일반 파티클
+  for (const p of state.parts) {
+    if (p.flame) continue;
+    ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+  }
+  // 불꽃 파티클 (가산 혼합 → 발광)
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of state.parts) {
+    if (!p.flame) continue;
+    const a = clamp(p.life / p.max, 0, 1);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    const sz = p.size * (0.35 + 0.65 * a);
+    ctx.beginPath(); ctx.arc(p.x, p.y, sz, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function drawWaves() {
+  if (!state.waves.length) return;
+  ctx.globalCompositeOperation = 'lighter';
+  for (const w of state.waves) {
+    if (w.t < 0) continue;
+    const e = clamp(w.t / w.life, 0, 1);
+    ctx.globalAlpha = (1 - e) * 0.9;
+    ctx.strokeStyle = '#ffd35e';
+    ctx.lineWidth = lerp(9, 0.5, e);
+    ctx.beginPath(); ctx.arc(w.x, w.y, e * w.maxR, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function drawGlow() {
+  if (!state.glow) return;
+  const e = clamp(state.glow.t / state.glow.life, 0, 1);
+  const a = 1 - e;
+  const R = geom().R;
+  const rad = R * (0.8 + e * 1.9);
+  const gr = ctx.createRadialGradient(state.glow.x, state.glow.y, 0, state.glow.x, state.glow.y, rad);
+  gr.addColorStop(0, 'rgba(255,255,240,' + (0.85 * a) + ')');
+  gr.addColorStop(0.22, 'rgba(255,214,110,' + (0.5 * a) + ')');
+  gr.addColorStop(0.55, 'rgba(255,150,45,' + (0.24 * a) + ')');
+  gr.addColorStop(1, 'rgba(255,120,20,0)');
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = gr;
+  ctx.fillRect(0, 0, W, H);
+  // 초반 순간 백색 코어 펑!
+  if (state.glow.t < 0.12) {
+    const ca = 1 - state.glow.t / 0.12;
+    ctx.globalAlpha = ca;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(state.glow.x, state.glow.y, R * 0.5 * (0.6 + 0.4 * ca), 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function drawPops() {
+  ctx.textAlign = 'center';
+  for (const p of state.pops) {
+    const a = clamp(1 - (p.t / p.life), 0, 1);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    ctx.font = (p.big ? 900 : 800) + ' ' + (p.big ? 34 : 22) + 'px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'start';
+}
+
+function drawGauge(g) {
+  if (state.mode !== 'playing') return;
+  const top = g.cy - g.R, bot = g.cy + g.R, h = bot - top;
+  const x = g.gx, w = 12;
+  roundRect(x - w / 2, top, w, h, 6);
+  ctx.fillStyle = 'rgba(255,255,255,.08)';
+  ctx.fill();
+  const bandH = h * 0.10;
+  roundRect(x - w / 2, g.cy - bandH / 2, w, bandH, 4);
+  ctx.fillStyle = 'rgba(255,211,94,.55)';
+  ctx.fill();
+  if (state.phase === 'power') {
+    const p = currentP();
+    const fh = h * p;
+    roundRect(x - w / 2, bot - fh, w, fh, 6);
+    ctx.fillStyle = '#ffd35e';
+    ctx.fill();
+    const yy = bot - fh;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x - w / 2 - 4, yy); ctx.lineTo(x + w / 2 + 4, yy); ctx.stroke();
+  }
+}
+
+function drawWind(g) {
+  if (state.mode !== 'playing' || state.score < WIND_FROM) return;
+  const amp = windAmp(g);
+  if (amp <= 0) return;
+  // HUD(상단 점수/베스트)와 겹치지 않도록 보드 바로 위에 배치
+  const cx = W / 2, y = Math.max(H * 0.15, g.cy - g.R * 1.07 - 18);
+  const dir = state.windRaw >= 0 ? 1 : -1;
+  const len = 16 + Math.abs(state.windRaw) * 44;
+  ctx.save();
+  ctx.globalAlpha = 0.85;
+  ctx.strokeStyle = '#7fd1ff';
+  ctx.fillStyle = '#7fd1ff';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx - dir * len, y); ctx.lineTo(cx + dir * len, y); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx + dir * len, y);
+  ctx.lineTo(cx + dir * (len - 9), y - 6);
+  ctx.lineTo(cx + dir * (len - 9), y + 6);
+  ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.font = '700 11px "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(127,209,255,.9)';
+  ctx.fillText('WIND', cx, y - 12);
+  ctx.textAlign = 'start';
+  ctx.restore();
+}
+
+function roundRect(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// ---------- 효과 ----------
+function addPop(x, y, text, color, big) {
+  state.pops.push({ x: x, y: y - 14, text: text, color: color, t: 0, life: big ? 1.1 : 0.85, big: big });
+}
+function burst(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2);
+    const sp = rand(60, 260);
+    state.parts.push({
+      x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60,
+      life: rand(0.5, 0.9), max: 0.9, size: rand(1.5, 4), color: color,
+    });
+  }
+}
+function addStuck(x, y) {
+  state.stuck.push({ x: x, y: y });
+  if (state.stuck.length > MAX_STUCK) state.stuck.shift();
+}
+
+// 🔥 BULL 적중 — 노랑 불꽃 화르륵 대폭발 + 충격파 + 섬광
+function bullImpact(x, y) {
+  const g = geom();
+  state.shake = Math.max(state.shake, 0.72);
+  state.glow = { x: x, y: y, t: 0, life: 0.62 };
+  state.waves.push({ x: x, y: y, t: 0, life: 0.5, maxR: g.R * 1.9 });
+  state.waves.push({ x: x, y: y, t: -0.08, life: 0.5, maxR: g.R * 1.3 });
+  state.waves.push({ x: x, y: y, t: -0.16, life: 0.45, maxR: g.R * 0.8 });
+  flameBurst(x, y);
+}
+const FLAME = ['#fff6c2', '#ffe27a', '#ffd35e', '#ff9f1c', '#ff6b1a', '#ef4d3a'];
+function flameBurst(x, y) {
+  // 조밀한 불덩이 코어 (천천히 퍼지며 잠깐 뭉쳐 있음)
+  for (let i = 0; i < 46; i++) {
+    const a = rand(0, Math.PI * 2);
+    const sp = rand(30, 190);
+    state.parts.push({
+      x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 120,
+      life: rand(0.5, 1.25), max: 1.25, size: rand(4, 11), color: FLAME[(Math.random() * FLAME.length) | 0], flame: true,
+    });
+  }
+  // 바깥으로 튀는 빠른 불티
+  for (let i = 0; i < 40; i++) {
+    const a = rand(0, Math.PI * 2);
+    const sp = rand(220, 540);
+    state.parts.push({
+      x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 100,
+      life: rand(0.35, 0.8), max: 0.9, size: rand(2, 6), color: FLAME[(Math.random() * FLAME.length) | 0], flame: true,
+    });
+  }
+  // 흰 스파크
+  for (let i = 0; i < 16; i++) {
+    const a = rand(0, Math.PI * 2);
+    const sp = rand(180, 520);
+    state.parts.push({
+      x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 90,
+      life: rand(0.22, 0.5), max: 0.5, size: rand(1.5, 3.5), color: '#ffffff', flame: true,
+    });
+  }
+  // 위로 오래 솟는 잔불 (화르륵 여운)
+  for (let i = 0; i < 12; i++) {
+    const a = rand(-Math.PI * 0.85, -Math.PI * 0.15);
+    const sp = rand(60, 240);
+    state.parts.push({
+      x: x + rand(-10, 10), y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60,
+      life: rand(0.8, 1.5), max: 1.5, size: rand(3, 7), color: FLAME[(Math.random() * 3) | 0], flame: true,
+    });
+  }
+}
+
+// ---------- 메인 루프 ----------
+let last = 0;
+function frame(t) {
+  if (!last) last = t;
+  let dt = (t - last) / 1000;
+  last = t;
+  if (dt > 0.05) dt = 0.05;
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ---------- HUD / 패널 ----------
+let dartsPulseTimer = null;
+function pulseDarts(kind) {
+  elDarts.classList.remove('gain', 'loss');
+  void elDarts.offsetWidth;
+  elDarts.classList.add(kind);
+  if (dartsPulseTimer) clearTimeout(dartsPulseTimer);
+  dartsPulseTimer = setTimeout(function () { elDarts.classList.remove('gain', 'loss'); }, 480);
+}
+function updateHud() {
+  elScore.textContent = state.score;
+  const m = multiplier();
+  elCombo.textContent = state.combo > 1 ? ('🔥 ' + state.combo + ' COMBO' + (m > 1 ? '  ×' + m : '')) : '';
+  elBest.textContent = 'BEST ' + state.best;
+  elDarts.innerHTML = '<span class="dicon">🎯</span><span class="dnum">' + state.darts + '</span>';
+}
+function showPanel(which) {
+  panelBoard.classList.add('hidden');
+  if (which === 'start') {
+    panelStart.classList.remove('hidden');
+    panelOver.classList.add('hidden');
+  } else {
+    elFinalScore.textContent = state.score;
+    elFinalBest.textContent = 'BEST ' + state.best;
+    panelOver.classList.remove('hidden');
+    panelStart.classList.add('hidden');
+  }
+}
+function hidePanels() {
+  panelStart.classList.add('hidden');
+  panelOver.classList.add('hidden');
+  panelBoard.classList.add('hidden');
+}
+function flashText(txt) {
+  elFlash.textContent = txt;
+  elFlash.classList.remove('show');
+  void elFlash.offsetWidth;
+  elFlash.classList.add('show');
+}
+
+// ---------- 사운드 (Web Audio, 합성음) ----------
+let actx = null, muted = false, chargeOsc = null, chargeGain = null, audioWarmed = false;
+function ensureAudio() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (actx && actx.state === 'suspended') actx.resume();
+  // 첫 사운드 생성 시 메인스레드가 멈칫하는 현상(jank) 제거:
+  // 최초 제스처(시작 누름) 때 오디오 그래프를 무음 톤으로 미리 깨워둔다.
+  if (actx && !audioWarmed) {
+    audioWarmed = true;
+    try {
+      const o = actx.createOscillator(), gg = actx.createGain();
+      gg.gain.value = 0.0001;            // 사실상 무음
+      o.connect(gg); gg.connect(actx.destination);
+      o.start(); o.stop(actx.currentTime + 0.03);
+    } catch (e) {}
+  }
+}
+function blip(freq, dur, type, vol) {
+  if (!actx || muted) return;
+  const o = actx.createOscillator(), gg = actx.createGain();
+  o.type = type; o.frequency.value = freq;
+  const t = actx.currentTime;
+  gg.gain.setValueAtTime(0.0001, t);
+  gg.gain.linearRampToValueAtTime(vol, t + 0.01);
+  gg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(gg); gg.connect(actx.destination);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+// 짧은 화이트노이즈 버스트 (화르륵 크랙)
+function noiseBurst(dur, vol, freq) {
+  if (!actx || muted) return;
+  const n = Math.floor(actx.sampleRate * dur);
+  const buf = actx.createBuffer(1, n, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const f = actx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq || 1400; f.Q.value = 0.8;
+  const gg = actx.createGain(); gg.gain.value = vol;
+  src.connect(f); f.connect(gg); gg.connect(actx.destination);
+  src.start();
+}
+function startCharge() {
+  if (!actx || muted) return;
+  chargeOsc = actx.createOscillator();
+  chargeGain = actx.createGain();
+  chargeOsc.type = 'sawtooth';
+  chargeOsc.frequency.value = 200;
+  chargeGain.gain.value = 0.0001;
+  chargeOsc.connect(chargeGain); chargeGain.connect(actx.destination);
+  chargeGain.gain.linearRampToValueAtTime(0.05, actx.currentTime + 0.03);
+  chargeOsc.start();
+}
+function setChargePitch(p) {
+  if (chargeOsc && actx) { try { chargeOsc.frequency.setTargetAtTime(180 + p * 900, actx.currentTime, 0.012); } catch (e) {} }
+}
+function stopCharge() {
+  if (chargeOsc && actx) {
+    const t = actx.currentTime;
+    try { chargeGain.gain.cancelScheduledValues(t); chargeGain.gain.setTargetAtTime(0.0001, t, 0.02); chargeOsc.stop(t + 0.12); } catch (e) {}
+  }
+  chargeOsc = null; chargeGain = null;
+}
+function playThrow() { blip(520, 0.10, 'triangle', 0.12); blip(300, 0.16, 'sine', 0.08); }
+function playHit(val) {
+  const f = val >= 50 ? 660 : val >= 25 ? 523 : val >= 10 ? 440 : 360;
+  blip(f, 0.14, 'square', 0.13);
+  blip(f * 1.5, 0.12, 'square', 0.05);
+}
+function playBull() {
+  // 묵직한 쿵 + 화르륵 크랙 + 상승 아르페지오
+  blip(68, 0.55, 'sine', 0.30);
+  blip(104, 0.4, 'triangle', 0.18);
+  noiseBurst(0.32, 0.22, 1500);
+  [0, 4, 7, 12, 16].forEach(function (st, i) {
+    setTimeout(function () { blip(660 * Math.pow(2, st / 12), 0.16, 'square', 0.12); }, i * 45);
+  });
+}
+function playMiss() { blip(150, 0.32, 'sawtooth', 0.18); blip(95, 0.42, 'sawtooth', 0.12); }
+
+// ---------- 입력 ----------
+function onPress() {
+  ensureAudio();
+  if (window.Leaderboard && window.Leaderboard.isOpen()) return;
+  if (state.mode === 'ready') { startGame(); return; }
+  if (state.mode === 'playing' && state.phase === 'aim') {
+    state.lockX = currentSweepX(geom());
+    state.powPhase = 0;       // 게이지를 바닥부터 차오르게
+    state.phase = 'power';
+    startCharge();
+  }
+}
+function onRelease() {
+  if (state.mode === 'playing' && state.phase === 'power') {
+    state.lockP = currentP();
+    stopCharge();
+    launchDart();
+  }
+}
+
+canvas.addEventListener('pointerdown', function (e) { e.preventDefault(); onPress(); });
+window.addEventListener('pointerup', function () { onRelease(); });
+window.addEventListener('pointercancel', function () { onRelease(); });
+panelStart.addEventListener('pointerdown', function (e) { e.preventDefault(); onPress(); });
+window.addEventListener('keydown', function (e) {
+  if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+  if (e.repeat) return;
+  if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); onPress(); }
+});
+window.addEventListener('keyup', function (e) {
+  if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+  if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); onRelease(); }
+});
+canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+elMute.addEventListener('pointerdown', function (e) {
+  e.preventDefault();
+  e.stopPropagation();
+  muted = !muted;
+  if (muted) stopCharge();
+  elMute.textContent = muted ? '🔇' : '🔊';
+});
+
+// ---------- 최고기록 저장 ----------
+function loadBest() {
+  try { return parseInt(localStorage.getItem('oneshot_best') || '0', 10) || 0; }
+  catch (e) { return 0; }
+}
+function saveBest(v) {
+  try { localStorage.setItem('oneshot_best', String(v)); } catch (e) {}
+}
+
+// ---------- 외부(리더보드)에서 사용하는 훅 ----------
+window.Oneshot = {
+  restart: function () { startGame(); },
+  toStart: function () { resetGame(); },
+  getScore: function () { return state.score; },
+  getBest: function () { return state.best; },
+  getDarts: function () { return state.darts; },
+};
+
+// ---------- 시작 ----------
+resize();
+resetGame();
+requestAnimationFrame(frame);
