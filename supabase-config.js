@@ -16,7 +16,7 @@
  * 값을 넣기 전까지는 게임은 정상 동작하고, 리더보드만 "미설정" 으로 표시됩니다.
  */
 window.ONESHOT_CONFIG = {
-  SUPABASE_URL: 'https://YOUR-PROJECT.supabase.co',
-  SUPABASE_ANON_KEY: 'YOUR-ANON-PUBLIC-KEY',
+  SUPABASE_URL: 'https://kfacyujmcriydkesitzf.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtmYWN5dWptY3JpeWRrZXNpdHpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODY3MTEsImV4cCI6MjA5NjA2MjcxMX0.Uqy1RC527ZKSUJBt7R43zNMvE7SUfQIR_-lKoymN9TQ',
   LEADERBOARD_LIMIT: 100,
 };
