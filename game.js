@@ -320,17 +320,18 @@ function drawBackground(g) {
   // 순검정 바탕
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
-  // 다트보드 뒤 스포트라이트 (살짝 위에서 비추는 느낌)
-  const sx = g.cx, sy = g.cy - g.R * 0.18;
-  const sp = ctx.createRadialGradient(sx, sy, g.R * 0.15, sx, sy, g.R * 2.7);
-  sp.addColorStop(0, 'rgba(124,144,178,.22)');
-  sp.addColorStop(0.45, 'rgba(64,78,104,.10)');
+  // 다트보드 뒤 스포트라이트 — 또렷하게 보이도록 밝게 (위에서 비추는 느낌)
+  const sx = g.cx, sy = g.cy - g.R * 0.12;
+  const sp = ctx.createRadialGradient(sx, sy, g.R * 0.2, sx, sy, g.R * 2.45);
+  sp.addColorStop(0, 'rgba(160,180,216,.52)');
+  sp.addColorStop(0.42, 'rgba(88,106,144,.24)');
+  sp.addColorStop(0.75, 'rgba(42,52,74,.09)');
   sp.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = sp;
   ctx.fillRect(0, 0, W, H);
   // 바닥 발사대 옅은 빛 (대기 중인 다트가 어둠에 묻히지 않게)
-  const r = ctx.createRadialGradient(g.launchX, g.launchY, 4, g.launchX, g.launchY, g.R * 1.0);
-  r.addColorStop(0, 'rgba(255,255,255,.045)');
+  const r = ctx.createRadialGradient(g.launchX, g.launchY, 4, g.launchX, g.launchY, g.R * 1.05);
+  r.addColorStop(0, 'rgba(255,255,255,.06)');
   r.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = r;
   ctx.fillRect(0, 0, W, H);
