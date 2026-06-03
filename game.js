@@ -829,34 +829,40 @@ function flashText(txt) {
 }
 
 // ---------- 사운드 (Web Audio, 합성음) ----------
-let actx = null, muted = false, chargeOsc = null, chargeGain = null, audioWarmed = false;
+let actx = null, muted = false, chargeOsc = null, chargeGain = null, audioWarmed = false, master = null;
 function ensureAudio() {
   if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (actx && !master) {
+    // 마스터 버스: 게인 + 로우패스로 거친 고음(모기 '엥~' 버즈)을 부드럽게 깎는다
+    master = actx.createGain(); master.gain.value = 0.85;
+    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3200; lp.Q.value = 0.3;
+    master.connect(lp); lp.connect(actx.destination);
+  }
   if (actx && actx.state === 'suspended') actx.resume();
-  // 첫 사운드 생성 시 메인스레드가 멈칫하는 현상(jank) 제거:
-  // 최초 제스처(시작 누름) 때 오디오 그래프를 무음 톤으로 미리 깨워둔다.
+  // 첫 사운드 jank 제거: 최초 제스처 때 무음 톤으로 오디오 그래프를 미리 깨워둔다.
   if (actx && !audioWarmed) {
     audioWarmed = true;
     try {
       const o = actx.createOscillator(), gg = actx.createGain();
-      gg.gain.value = 0.0001;            // 사실상 무음
-      o.connect(gg); gg.connect(actx.destination);
+      gg.gain.value = 0.0001;
+      o.connect(gg); gg.connect(master);
       o.start(); o.stop(actx.currentTime + 0.03);
     } catch (e) {}
   }
 }
+function out() { return master || (actx && actx.destination); }
 function blip(freq, dur, type, vol) {
   if (!actx || muted) return;
   const o = actx.createOscillator(), gg = actx.createGain();
   o.type = type; o.frequency.value = freq;
   const t = actx.currentTime;
   gg.gain.setValueAtTime(0.0001, t);
-  gg.gain.linearRampToValueAtTime(vol, t + 0.01);
+  gg.gain.linearRampToValueAtTime(vol, t + 0.012);
   gg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(gg); gg.connect(actx.destination);
+  o.connect(gg); gg.connect(out());
   o.start(t); o.stop(t + dur + 0.02);
 }
-// 짧은 화이트노이즈 버스트 (화르륵 크랙)
+// 짧은 화이트노이즈 버스트 (BULL '화르륵' 크랙)
 function noiseBurst(dur, vol, freq) {
   if (!actx || muted) return;
   const n = Math.floor(actx.sampleRate * dur);
@@ -864,52 +870,54 @@ function noiseBurst(dur, vol, freq) {
   const data = buf.getChannelData(0);
   for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
   const src = actx.createBufferSource(); src.buffer = buf;
-  const f = actx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq || 1400; f.Q.value = 0.8;
+  const f = actx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq || 1200; f.Q.value = 0.7;
   const gg = actx.createGain(); gg.gain.value = vol;
-  src.connect(f); f.connect(gg); gg.connect(actx.destination);
+  src.connect(f); f.connect(gg); gg.connect(out());
   src.start();
 }
+// 충전음: 부드러운 사인 톤이 살짝 차오른다 (톱니/사각파 버즈 제거)
 function startCharge() {
   if (!actx || muted) return;
   chargeOsc = actx.createOscillator();
   chargeGain = actx.createGain();
-  chargeOsc.type = 'sawtooth';
-  chargeOsc.frequency.value = 200;
+  chargeOsc.type = 'sine';
+  chargeOsc.frequency.value = 220;
   chargeGain.gain.value = 0.0001;
-  chargeOsc.connect(chargeGain); chargeGain.connect(actx.destination);
-  chargeGain.gain.linearRampToValueAtTime(0.05, actx.currentTime + 0.03);
+  chargeOsc.connect(chargeGain); chargeGain.connect(out());
+  chargeGain.gain.linearRampToValueAtTime(0.04, actx.currentTime + 0.05);
   chargeOsc.start();
 }
 function setChargePitch(p) {
-  if (chargeOsc && actx) { try { chargeOsc.frequency.setTargetAtTime(180 + p * 900, actx.currentTime, 0.012); } catch (e) {} }
+  if (chargeOsc && actx) { try { chargeOsc.frequency.setTargetAtTime(220 + p * 320, actx.currentTime, 0.02); } catch (e) {} }
 }
 function stopCharge() {
   if (chargeOsc && actx) {
     const t = actx.currentTime;
-    try { chargeGain.gain.cancelScheduledValues(t); chargeGain.gain.setTargetAtTime(0.0001, t, 0.02); chargeOsc.stop(t + 0.12); } catch (e) {}
+    try { chargeGain.gain.cancelScheduledValues(t); chargeGain.gain.setTargetAtTime(0.0001, t, 0.03); chargeOsc.stop(t + 0.14); } catch (e) {}
   }
   chargeOsc = null; chargeGain = null;
 }
-function playThrow() { blip(520, 0.10, 'triangle', 0.12); blip(300, 0.16, 'sine', 0.08); }
+function playThrow() { blip(430, 0.09, 'sine', 0.10); blip(650, 0.07, 'triangle', 0.05); }
 function playHit(val) {
-  const f = val >= 50 ? 660 : val >= 25 ? 523 : val >= 10 ? 440 : 360;
-  blip(f, 0.14, 'square', 0.13);
-  blip(f * 1.5, 0.12, 'square', 0.05);
+  // 부드러운 '딩' (안쪽 링일수록 높게) — 삼각파 + 옥타브 사인
+  const f = val >= 50 ? 740 : val >= 25 ? 587 : val >= 10 ? 494 : 392;
+  blip(f, 0.16, 'triangle', 0.16);
+  blip(f * 2, 0.11, 'sine', 0.06);
 }
 function playBull() {
-  // 묵직한 쿵 + 화르륵 크랙 + 상승 아르페지오
-  blip(68, 0.55, 'sine', 0.30);
-  blip(104, 0.4, 'triangle', 0.18);
-  noiseBurst(0.32, 0.22, 1500);
+  // 묵직한 쿵 + 부드러운 상승 아르페지오 + 살짝의 화르륵
+  blip(70, 0.5, 'sine', 0.32);
+  blip(140, 0.34, 'sine', 0.16);
+  noiseBurst(0.28, 0.12, 1100);
   [0, 4, 7, 12, 16].forEach(function (st, i) {
-    setTimeout(function () { blip(660 * Math.pow(2, st / 12), 0.16, 'square', 0.12); }, i * 45);
+    setTimeout(function () { blip(523 * Math.pow(2, st / 12), 0.18, 'triangle', 0.14); }, i * 55);
   });
 }
-function playMiss() { blip(150, 0.32, 'sawtooth', 0.18); blip(95, 0.42, 'sawtooth', 0.12); }
-function playFire() { blip(523, 0.12, 'square', 0.12); blip(784, 0.18, 'square', 0.10); noiseBurst(0.22, 0.12, 2600); }
-function playCool() { blip(420, 0.30, 'sine', 0.14); setTimeout(function () { blip(250, 0.45, 'sine', 0.12); }, 90); }
-function playRecord() { [0, 4, 7, 12].forEach(function (st, i) { setTimeout(function () { blip(660 * Math.pow(2, st / 12), 0.15, 'triangle', 0.13); }, i * 70); }); }
-function playTension() { blip(92, 0.18, 'sine', 0.20); setTimeout(function () { blip(92, 0.20, 'sine', 0.17); }, 260); }
+function playMiss() { blip(240, 0.16, 'sine', 0.15); setTimeout(function () { blip(150, 0.34, 'sine', 0.13); }, 70); }
+function playFire() { blip(523, 0.14, 'triangle', 0.13); blip(784, 0.20, 'triangle', 0.10); blip(1047, 0.16, 'sine', 0.06); }
+function playCool() { blip(440, 0.30, 'sine', 0.13); setTimeout(function () { blip(262, 0.5, 'sine', 0.12); }, 90); }
+function playRecord() { [0, 4, 7, 12].forEach(function (st, i) { setTimeout(function () { blip(659 * Math.pow(2, st / 12), 0.16, 'triangle', 0.13); }, i * 70); }); }
+function playTension() { blip(98, 0.20, 'sine', 0.18); setTimeout(function () { blip(98, 0.22, 'sine', 0.15); }, 280); }
 
 // ---------- 입력 ----------
 function onPress() {
