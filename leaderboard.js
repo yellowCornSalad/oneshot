@@ -66,8 +66,6 @@
   const ANI = ['다람쥐', '호랑이', '펭귄', '고양이', '부엉이', '여우', '너구리', '수달', '판다', '상어', '매', '코끼리', '두더지', '문어', '햄스터', '거북이', '고슴도치', '알파카'];
   function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
   function randomName() { return pick(ADJ) + pick(ANI) + (Math.floor(Math.random() * 90) + 10); }
-  function loadName() { try { return localStorage.getItem('oneshot_name') || ''; } catch (e) { return ''; } }
-  function saveName(n) { try { localStorage.setItem('oneshot_name', n); } catch (e) {} }
 
   // 가벼운 욕설 가드 (사내용 — 완벽하진 않음)
   const BANNED = ['시발', '씨발', 'ㅅㅂ', '병신', 'ㅂㅅ', '개새', 'fuck', 'shit', 'asshole'];
@@ -169,7 +167,6 @@
   submitBtn.addEventListener('click', async function () {
     const name = clean(nameInput.value);
     nameInput.value = name;
-    saveName(name);
     const score = window.Oneshot ? window.Oneshot.getScore() : 0;
     if (!ready) { openBoard({ name: name, score: score, rank: null }); return; }
     submitBtn.disabled = true;
@@ -216,7 +213,7 @@
     ready: ready,
     isOpen: function () { return !panelBoard.classList.contains('hidden'); },
     onOver: function () {
-      nameInput.value = loadName() || randomName();
+      nameInput.value = randomName();   // 매 게임오버마다 새 랜덤 닉네임
       submitBtn.disabled = false;
       setMsg('');
     },
