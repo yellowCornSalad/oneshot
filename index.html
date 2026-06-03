@@ -39,7 +39,10 @@
       <p><b>누르면</b> 좌우 조준 멈춤 · <b>떼면</b> 위아래 파워로 던지기</p>
       <p class="hint">🎯 <b class="gold">5발</b>로 시작 · 던질 때마다 1발 소모 · 다 떨어지면 끝!<br />정중앙 <b class="gold">BULL</b> 적중 = 100점 + 다트 <b class="gold">+2</b> + 🔥<b class="gold">화르륵</b> 대폭발 🔥</p>
       <div class="cta">탭하여 시작</div>
-      <button class="btn ghost" id="start-board">🏆 리더보드</button>
+      <div class="start-links">
+        <button class="btn ghost" id="start-board">🏆 리더보드</button>
+        <button class="btn ghost" id="start-wall">💬 게시판</button>
+      </div>
     </div>
 
     <!-- 게임 오버 화면 -->
@@ -66,10 +69,23 @@
         <button class="btn" id="board-again">다시하기</button>
       </div>
     </div>
+
+    <!-- 익명 게시판 -->
+    <div class="panel hidden" id="panel-wall">
+      <h2>💬 게시판</h2>
+      <div id="wall-list" class="wall-list"></div>
+      <div class="wall-compose">
+        <input id="wall-input" type="text" maxlength="80" placeholder="한 줄 남기기 (익명)" autocomplete="off" spellcheck="false" />
+        <button class="btn" id="wall-send">남기기</button>
+      </div>
+      <div id="wall-msg"></div>
+      <button class="btn ghost" id="wall-close">닫기</button>
+    </div>
   </div>
 
   <script src="supabase-config.js"></script>
   <script src="game.js"></script>
   <script src="leaderboard.js"></script>
+  <script src="wall.js"></script>
 </body>
 </html>

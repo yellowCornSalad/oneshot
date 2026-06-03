@@ -340,3 +340,40 @@ html, body {
   text-align: center;
 }
 .board-empty code { background: rgba(255,255,255,.1); padding: 1px 6px; border-radius: 5px; }
+
+/* ---------- 시작화면 링크(리더보드/게시판) ---------- */
+.start-links { display: flex; gap: 10px; margin-top: 4px; }
+.start-links .btn { font-size: 14px; padding: 10px 16px; }
+
+/* ---------- 익명 게시판 ---------- */
+.wall-list {
+  width: min(340px, 86vw);
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 2px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  -webkit-overflow-scrolling: touch;
+  text-align: left;
+}
+.wall-row { padding: 9px 13px; border-radius: 10px; background: rgba(255,255,255,.06); }
+.wall-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+.wall-meta .wn { font-size: 12px; font-weight: 800; color: var(--gold); opacity: .9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wall-meta .wt { font-size: 11px; opacity: .45; flex: none; }
+.wall-row .wb { font-size: 15px; line-height: 1.4; word-break: break-word; }
+.wall-compose { display: flex; gap: 8px; width: min(340px, 86vw); margin-top: 4px; }
+#wall-input {
+  flex: 1; min-width: 0;
+  padding: 11px 14px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255,255,255,.1);
+  color: var(--ink);
+  font-size: 16px;            /* 16px 미만이면 iOS 사파리에서 자동 확대됨 */
+  outline: none;
+}
+#wall-input:focus { background: rgba(255,255,255,.16); box-shadow: 0 0 0 2px var(--gold); }
+#wall-input::placeholder { color: rgba(245,247,251,.45); }
+#wall-send { flex: none; padding: 11px 18px; }
+#wall-msg { min-height: 18px; font-size: 13px; color: var(--gold); }

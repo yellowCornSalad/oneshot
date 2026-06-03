@@ -212,7 +212,7 @@ function resolveHit() {
     const rf = refillFor(val);          // 다트 보충 (BULL만 +2)
     if (rf > 0) {
       state.darts = Math.min(DART_CAP, state.darts + rf);
-      addPop(d.x1, d.y1 - 30, '+' + rf + ' 다트', '#46d369', false);
+      addPop(d.x1, d.y1 - 30, '+' + rf + ' 🎯', '#46d369', false);
     }
     addStuck(d.x1, d.y1);
 
@@ -221,7 +221,7 @@ function resolveHit() {
     if (justRecord) {
       state.recordHit = true;
       state.darts = Math.min(DART_CAP, state.darts + 1);
-      addPop(d.x1, d.y1 - 56, '신기록 +1🎯', '#ffd35e', false);
+      addPop(d.x1, d.y1 - 56, '+1 🎯', '#ffd35e', false);
     }
 
     if (isBull) { bullImpact(d.x1, d.y1); playBull(); }
@@ -229,24 +229,24 @@ function resolveHit() {
     if (justFired) playFire();
     if (justRecord) playRecord();
 
-    // 플래시 우선순위: 신기록 > BULL > ON FIRE 진입 > 아깝다
+    // 플래시 우선순위: 신기록 > BULL > ON FIRE 진입 > 아슬 (인게임 텍스트는 영어로 통일)
     let flash = '';
-    if (justRecord) flash = '🎉 신기록!';
+    if (justRecord) flash = 'NEW BEST!';
     else if (isBull) flash = effMult > 1 ? '🔥 BULLSEYE ×' + effMult + ' 🔥' : '🔥 BULLSEYE 🔥';
     else if (justFired) flash = '🔥 ON FIRE 🔥';
-    else if (nearBull) flash = '아깝다! 거의 BULL!';
+    else if (nearBull) flash = 'SO CLOSE!';
     if (flash) flashText(flash);
   } else {
     const wasFire = state.onFire;
     const nearMiss = frac < 1.18;       // 보드 바로 바깥 = 아슬아슬
     state.combo = 0;
     state.onFire = false;
-    addPop(d.x1, d.y1, nearMiss ? '아깝다!' : 'MISS', '#e5484d', false);
+    addPop(d.x1, d.y1, 'MISS', '#e5484d', false);
     burst(d.x1, d.y1, '#e5484d', 8);
     state.shake = Math.max(state.shake, 0.22);
     playMiss();
-    if (wasFire) { state.coolT = 0.6; flashText('💨 콤보 종료'); playCool(); }
-    else if (nearMiss) flashText('아깝다!!');
+    if (wasFire) { state.coolT = 0.6; playCool(); }   // 콤보 끊김: 식는 연출만(텍스트 없음)
+    else if (nearMiss) flashText('SO CLOSE!');
   }
 
   // 다트 수 변화 펄스
@@ -911,7 +911,7 @@ function playTension() { blip(92, 0.18, 'sine', 0.20); setTimeout(function () { 
 // ---------- 입력 ----------
 function onPress() {
   ensureAudio();
-  if (window.Leaderboard && window.Leaderboard.isOpen()) return;
+  if ((window.Leaderboard && window.Leaderboard.isOpen()) || (window.Wall && window.Wall.isOpen())) return;
   if (state.mode === 'ready') { startGame(); return; }
   if (state.mode === 'playing' && state.phase === 'aim') {
     state.lockX = currentSweepX(geom());
