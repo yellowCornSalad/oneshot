@@ -49,35 +49,38 @@
       return typeof r === 'string' ? r : 'network';
     } catch (e) { return 'network'; }
   }
+  // 순위 조회는 "닉네임별 최고점" 뷰에서 — 같은 사람(닉네임)은 최고 점수 1개만 표시.
+  // (뷰가 아직 없으면 원본 테이블로 자동 폴백)
+  let readTable = 'dart_best_scores';
+  async function readRows(query) {
+    for (;;) {
+      const res = await fetch(URL + '/rest/v1/' + readTable + query, { headers: headers() });
+      if (res.ok) return res.json();
+      if (readTable !== TABLE) { readTable = TABLE; continue; }
+      throw new Error('fetch failed: ' + res.status);
+    }
+  }
   async function topScores(limit) {
-    const url = URL + '/rest/v1/' + TABLE + '?select=name,score&order=score.desc,created_at.asc&limit=' + (limit || LIMIT);
-    const res = await fetch(url, { headers: headers() });
-    if (!res.ok) throw new Error('fetch failed: ' + res.status);
-    return res.json();
+    return readRows('?select=name,score&order=score.desc,created_at.asc&limit=' + (limit || LIMIT));
   }
   async function rankOf(score) {
-    const url = URL + '/rest/v1/' + TABLE + '?select=id&score=gt.' + encodeURIComponent(score);
-    const res = await fetch(url, { headers: headers({ Prefer: 'count=exact', Range: '0-0' }) });
+    const res = await fetch(URL + '/rest/v1/' + readTable + '?select=name&score=gt.' + encodeURIComponent(score), {
+      headers: headers({ Prefer: 'count=exact', Range: '0-0' }),
+    });
     const cr = res.headers.get('content-range'); // "0-0/<total>" 형태
     if (!cr) return null;
     const total = parseInt(cr.split('/')[1], 10);
-    return isNaN(total) ? null : total + 1; // 나보다 높은 점수 수 + 1
+    return isNaN(total) ? null : total + 1; // 나보다 높은 사람 수 + 1
   }
 
   // 내 점수 기준 바로 위(더 높은 점수)·아래(더 낮은 점수)에서 가장 가까운 사람
   async function neighborAbove(score) {
-    const url = URL + '/rest/v1/' + TABLE + '?select=name,score&score=gt.' + encodeURIComponent(score) + '&order=score.asc&limit=1';
-    const res = await fetch(url, { headers: headers() });
-    if (!res.ok) return null;
-    const rows = await res.json();
-    return rows[0] || null;
+    try { const rows = await readRows('?select=name,score&score=gt.' + encodeURIComponent(score) + '&order=score.asc&limit=1'); return rows[0] || null; }
+    catch (e) { return null; }
   }
   async function neighborBelow(score) {
-    const url = URL + '/rest/v1/' + TABLE + '?select=name,score&score=lt.' + encodeURIComponent(score) + '&order=score.desc&limit=1';
-    const res = await fetch(url, { headers: headers() });
-    if (!res.ok) return null;
-    const rows = await res.json();
-    return rows[0] || null;
+    try { const rows = await readRows('?select=name,score&score=lt.' + encodeURIComponent(score) + '&order=score.desc&limit=1'); return rows[0] || null; }
+    catch (e) { return null; }
   }
 
   // ---------- 익명 닉네임 ----------
@@ -158,14 +161,21 @@
   // 🎉 1만점 돌파자 축하 띠지 (복권 당첨 현수막 느낌 — 금색 마퀴)
   function renderCelebrate(rows) {
     if (!boardCelebrate) return;
-    const winners = rows.filter(function (r) { return r.score >= CELEBRATE_AT; });
+    // 같은 사람(닉네임)은 최고 점수 1개만 — 사람 단위로 중복 제거
+    const best = {};
+    rows.forEach(function (r) {
+      if (r.score >= CELEBRATE_AT && (!(r.name in best) || best[r.name] < r.score)) best[r.name] = r.score;
+    });
+    const winners = Object.keys(best).map(function (n) { return { name: n, score: best[n] }; })
+      .sort(function (a, b) { return b.score - a.score; });
     if (!winners.length) { boardCelebrate.classList.add('hidden'); boardCelebrate.innerHTML = ''; return; }
     const sep = '   ✦   ';
     const line = winners.map(function (w) {
       return '🎊 ' + escapeHtml(w.name) + '님 ' + w.score.toLocaleString() + '점 돌파 축하드립니다! 🎉';
     }).join(sep);
     // 끊김 없는 마퀴를 위해 같은 내용을 두 번 이어붙임
-    boardCelebrate.innerHTML = '<div class="celebrate-track">' + line + sep + line + sep + '</div>';
+    const dur = Math.max(14, winners.length * 8);   // 1명당 ~8초 — 인원이 늘어도 같은 체감 속도
+    boardCelebrate.innerHTML = '<div class="celebrate-track" style="animation-duration:' + dur + 's">' + line + sep + line + sep + '</div>';
     boardCelebrate.classList.remove('hidden');
   }
 

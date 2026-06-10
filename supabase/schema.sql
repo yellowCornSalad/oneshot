@@ -125,3 +125,13 @@ end $fn$;
 
 grant execute on function public.start_dart_session() to anon;
 grant execute on function public.submit_dart_score(text, text, int) to anon;
+
+
+-- ──────────────────────────────────────────────────────────────
+-- 닉네임별 최고점 뷰 — 리더보드/축하 띠지는 사람당 1개(최고점)만 표시
+create or replace view public.dart_best_scores
+with (security_invoker = on) as
+select distinct on (name) name, score, created_at
+from public.dart_scores
+order by name, score desc, created_at asc;
+grant select on public.dart_best_scores to anon;
