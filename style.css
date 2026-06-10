@@ -452,7 +452,7 @@ html, body {
  * ============================================================ */
 .panel {
   color: #1b2433;
-  background: linear-gradient(180deg, #f5f8fc, #e6edf6);
+  background: linear-gradient(165deg, #d9e4f5 0%, #e3e0f1 55%, #efe7ee 100%);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }

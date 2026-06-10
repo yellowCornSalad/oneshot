@@ -481,11 +481,11 @@ function render() {
 }
 
 function drawBackground(g) {
-  // 너무 어둡지 않게 — 깊은 네이비 그라데이션(위가 밝고 아래로 차분하게)
+  // 밝고 이쁘장한 트와일라잇 그라데이션(플레이 화면도 밝게 — 단 불꽃/조준선이 살도록 중간톤 유지)
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#273450');
-  bg.addColorStop(0.55, '#1a2332');
-  bg.addColorStop(1, '#11161f');
+  bg.addColorStop(0, '#6d80c4');
+  bg.addColorStop(0.5, '#8a82c4');
+  bg.addColorStop(1, '#a98ac0');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
   // 다트보드 뒤 스포트라이트 — 살짝 더 밝게(보드가 또렷하게 떠 보이도록)
