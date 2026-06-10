@@ -779,12 +779,13 @@ function drawGauge(g) {
 
 function drawWind(g) {
   if (state.mode !== 'playing' || state.score < WIND_FROM) return;
+  if (state.phase !== 'aim' && state.phase !== 'power') return;   // 조준 중에만 표시(비행 중 다트와 안 겹치게)
   const amp = windAmp(g);
   if (amp <= 0) return;
   const dir = state.windRaw >= 0 ? 1 : -1;
   const strength = Math.abs(state.windRaw);             // 0.5~1
   const cx = W / 2;
-  const y = Math.max(H * 0.13, g.cy - g.R * 1.07 - 32); // 보드 위로 충분히 띄워 십자선과 분리
+  const y = g.cy + g.R * 1.07 + 40;   // 보드 아래 빈 공간 — 상단 HUD(점수·콤보·BEST·목표)와 안 겹치게
   const len = 30 + strength * 40;
   const halfW = len + 34;
   ctx.save();
