@@ -377,3 +377,36 @@ html, body {
 #wall-input::placeholder { color: rgba(245,247,251,.45); }
 #wall-send { flex: none; padding: 11px 18px; }
 #wall-msg { min-height: 18px; font-size: 13px; color: var(--gold); }
+
+/* ---------- 🎉 1만점 돌파 축하 띠지 (복권 당첨 느낌, 금색 마퀴) ---------- */
+.celebrate {
+  position: relative;
+  width: min(340px, 86vw);
+  overflow: hidden;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #f6b73c, #ffe9a8, #f6b73c);
+  box-shadow: 0 4px 18px rgba(255,180,40,.45), inset 0 0 0 1px rgba(255,255,255,.55);
+  margin: 1px 0 2px;
+  animation: celebPop .5s ease both;
+}
+.celebrate.hidden { display: none; }
+.celebrate-track {
+  display: inline-block;
+  white-space: nowrap;
+  padding: 9px 0;
+  font-size: 14px;
+  font-weight: 900;
+  color: #7a4400;
+  animation: marquee 16s linear infinite;
+}
+.celebrate::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.75) 50%, transparent 65%);
+  transform: translateX(-120%);
+  animation: shine 3s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes shine { 0% { transform: translateX(-120%); } 55%,100% { transform: translateX(120%); } }
+@keyframes celebPop { 0% { transform: scale(.85); opacity: 0; } 60% { transform: scale(1.05); } 100% { transform: scale(1); opacity: 1; } }

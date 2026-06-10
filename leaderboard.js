@@ -15,6 +15,7 @@
   const KEY = cfg.SUPABASE_ANON_KEY || '';
   const LIMIT = cfg.LEADERBOARD_LIMIT || 100;
   const TOP_N = 20;                 // 메인 목록에 보여줄 상위 인원 수
+  const CELEBRATE_AT = 10000;       // 이 점수 돌파 시 축하 띠지(복권 당첨 느낌)
   const TABLE = 'dart_scores';
   const ready = !!(URL && KEY && URL.indexOf('YOUR-') === -1 && KEY.indexOf('YOUR-') === -1);
 
@@ -96,6 +97,7 @@
   const boardClose = document.getElementById('board-close');
   const boardList = document.getElementById('board-list');
   const boardMyrank = document.getElementById('board-myrank');
+  const boardCelebrate = document.getElementById('board-celebrate');
 
   function setMsg(t) { submitMsg.textContent = t || ''; }
   function hideAll() {
@@ -135,12 +137,27 @@
     boardList.innerHTML = html;
   }
 
+  // 🎉 1만점 돌파자 축하 띠지 (복권 당첨 현수막 느낌 — 금색 마퀴)
+  function renderCelebrate(rows) {
+    if (!boardCelebrate) return;
+    const winners = rows.filter(function (r) { return r.score >= CELEBRATE_AT; });
+    if (!winners.length) { boardCelebrate.classList.add('hidden'); boardCelebrate.innerHTML = ''; return; }
+    const sep = '   ✦   ';
+    const line = winners.map(function (w) {
+      return '🎊 ' + escapeHtml(w.name) + '님 ' + w.score.toLocaleString() + '점 돌파 축하드립니다! 🎉';
+    }).join(sep);
+    // 끊김 없는 마퀴를 위해 같은 내용을 두 번 이어붙임
+    boardCelebrate.innerHTML = '<div class="celebrate-track">' + line + sep + line + sep + '</div>';
+    boardCelebrate.classList.remove('hidden');
+  }
+
   async function openBoard(mine) {
     hideAll();
     panelBoard.classList.remove('hidden');
     boardMyrank.textContent = (mine && mine.score != null)
       ? ('내 기록: ' + mine.score + '점' + (mine.rank ? ' · ' + mine.rank + '위' : ''))
       : '';
+    if (boardCelebrate) boardCelebrate.classList.add('hidden');   // 기본 숨김
     if (!ready) {
       boardList.innerHTML = '<div class="board-empty">리더보드가 아직 설정되지 않았어요.<br><code>supabase-config.js</code> 에 Supabase URL과 anon 키를 넣어주세요.</div>';
       return;
@@ -148,6 +165,7 @@
     boardList.innerHTML = '<div class="board-loading">불러오는 중…</div>';
     try {
       const top = await topScores(TOP_N);
+      renderCelebrate(top);   // 🎉 1만점 돌파자 축하 띠지
       let pos = null;
       // 내가 상위 20위 밖이면 내 앞/뒤 사람을 따로 불러온다
       if (mine && typeof mine.rank === 'number' && mine.rank > TOP_N) {
