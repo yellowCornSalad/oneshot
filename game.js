@@ -76,6 +76,9 @@ const elFinalScore = document.getElementById('final-score');
 const elFinalBest = document.getElementById('final-best');
 const elDanger = document.getElementById('danger');
 const elOverGoal = document.getElementById('over-goal');
+const elShareBtn = document.getElementById('over-share');
+const elShareMsg = document.getElementById('share-msg');
+const SHARE_URL = 'https://yellowcornsalad.github.io/oneshot/';
 
 // ---------- 상태 ----------
 const state = {
@@ -839,6 +842,30 @@ function flashText(txt) {
   elFlash.classList.add('show');
 }
 
+// ---------- 점수 자랑하기(공유) ----------
+function shareMsg(t) {
+  if (!elShareMsg) return;
+  elShareMsg.textContent = t || '';
+  if (t) setTimeout(function () { if (elShareMsg) elShareMsg.textContent = ''; }, 2600);
+}
+function shareScore() {
+  const text = 'ONESHOT에서 ' + state.score + '점 찍었어요! 🎯 너도 도전해봐 👉';
+  const full = text + ' ' + SHARE_URL;
+  if (navigator.share) {
+    // 모바일/지원 브라우저 → 네이티브 공유 시트(카톡·슬랙 등 + 게임 링크)
+    navigator.share({ title: 'ONESHOT 🎯', text: text, url: SHARE_URL })
+      .then(function () { shareMsg('공유했어요! 🎯'); })
+      .catch(function () {});
+  } else if (navigator.clipboard && navigator.clipboard.writeText) {
+    // 데스크톱 등 → 클립보드 복사 후 카톡/슬랙에 붙여넣기
+    navigator.clipboard.writeText(full)
+      .then(function () { shareMsg('📋 복사됐어요! 카톡·슬랙에 붙여넣기'); })
+      .catch(function () { try { window.prompt('복사해서 공유하세요 (Ctrl+C)', full); } catch (e) {} });
+  } else {
+    try { window.prompt('복사해서 공유하세요 (Ctrl+C)', full); } catch (e) {}
+  }
+}
+
 // ---------- 사운드 (Web Audio, 합성음) ----------
 let actx = null, muted = false, chargeOsc = null, chargeGain = null, audioWarmed = false, master = null;
 function ensureAudio() {
@@ -972,6 +999,14 @@ elMute.addEventListener('pointerdown', function (e) {
   if (muted) stopCharge();
   elMute.textContent = muted ? '🔇' : '🔊';
 });
+
+if (elShareBtn) {
+  elShareBtn.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    shareScore();
+  });
+}
 
 // ---------- 최고기록 저장 ----------
 function loadBest() {

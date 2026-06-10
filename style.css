@@ -297,6 +297,14 @@ html, body {
 
 #submit-msg { min-height: 18px; font-size: 13px; color: var(--gold); }
 
+/* ---------- 자랑하기(공유) 버튼 ---------- */
+.share-btn {
+  margin-top: 6px;
+  background: #fee500;        /* 카카오 옐로 — '공유' 신호 */
+  color: #3a2c00;
+}
+#share-msg { min-height: 16px; font-size: 13px; color: var(--gold); }
+
 /* ---------- 리더보드 ---------- */
 #board-myrank { font-size: 15px; font-weight: 700; color: var(--gold); min-height: 20px; }
 .board-list {
