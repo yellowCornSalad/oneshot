@@ -20,7 +20,8 @@
 // ---------- 튜닝 상수 ----------
 const AIM_RATE0 = 1.05, AIM_RATE1 = 2.60;   // 좌우 조준선 속도(주기/초): 시작 → 최대(고득점 구간 가속)
 const POW_RATE0 = 1.20, POW_RATE1 = 2.90;   // 상하 파워 게이지 속도
-const WAIT_ACCEL = 0.75, WAIT_ACCEL_CAP = 2.8; // 한 페이즈에서 오래 망설일수록(캠핑) 조준/게이지가 점점 빨라짐 — 호딩 억제
+const WAIT_FREE_CYCLES = 3;                    // 캠핑 가속 전 자유 왕복 횟수(3바퀴까지는 정상 속도)
+const WAIT_ACCEL = 0.55, WAIT_ACCEL_CAP = 2.8; // 3바퀴 이후 한 바퀴당 가속 증가분 / 최대 배수
 const RAMP_SCORE = 1600;                     // 이 점수에서 난이도 최대치
 const WIND_FROM  = 300;                      // 이 점수부터 바람 등장
 const WIND_MAX   = 0.85;                      // 바람 최대 세기(보드 반지름 비율)
@@ -107,7 +108,8 @@ const state = {
   throws: 0,
   aimPhase: 0,        // 좌우 조준선 위상
   powPhase: 0,        // 상하 게이지 위상
-  phaseT: 0,          // 현재 페이즈(조준/파워)에 머문 시간 → 오래 끌수록 가속(캠핑 방지)
+  phaseStartPh: 0,    // 현재 페이즈 시작 시점의 위상 → 경과 "바퀴 수" 계산용(캠핑 가속)
+  cyFrac: 0.5,        // 보드 세로 중심 비율(메뉴 0.5 ↔ 플레이 0.37, 부드럽게 이징)
   lockX: 0,           // 멈춘 가로 위치(px)
   lockP: 0.5,         // 멈춘 게이지 값(0~1)
   windRaw: 0,         // 이번 던지기 바람 방향(-1~1)
@@ -137,7 +139,7 @@ function geom() {
   return {
     R: R,
     cx: W / 2,
-    cy: H * 0.37,
+    cy: H * state.cyFrac,
     sweepHalf: R * 1.06,        // 조준선이 좌우로 오가는 반폭
     launchX: W / 2,
     launchY: H * 0.93,          // 다트가 출발하는 지점(화면 하단)
@@ -160,8 +162,16 @@ function diff() {
 }
 function aimRate() { return lerp(AIM_RATE0, AIM_RATE1, diff()); }
 function powRate() { return lerp(POW_RATE0, POW_RATE1, diff()); }
-// 한 페이즈에서 오래 망설일수록 점점 빨라지는 배수(완벽한 순간을 무한정 기다리는 캠핑 억제)
-function waitAccel() { return clamp(1 + WAIT_ACCEL * state.phaseT, 1, WAIT_ACCEL_CAP); }
+// 현재 페이즈에서 지나간 왕복(바퀴) 수 — tri 주기 = 위상 2 = 1바퀴(좌→우→좌)
+function phaseCycles() {
+  const ph = state.phase === 'power' ? state.powPhase : state.aimPhase;
+  return (ph - state.phaseStartPh) / 2;
+}
+// 3바퀴까지는 정상 속도, 그 이후부터 바퀴당 가속(완벽한 순간을 무한정 기다리는 캠핑 억제)
+function waitAccel() {
+  const over = phaseCycles() - WAIT_FREE_CYCLES;
+  return over <= 0 ? 1 : clamp(1 + WAIT_ACCEL * over, 1, WAIT_ACCEL_CAP);
+}
 function windAmp(g) {
   if (state.score < WIND_FROM) return 0;
   return (0.4 + 0.6 * diff()) * WIND_MAX * g.R;   // 등장하자마자 체감, diff(점수+여분다트)로 강해짐
@@ -252,7 +262,7 @@ function startGame() {
 }
 function newThrow() {
   state.phase = 'aim';
-  state.phaseT = 0;   // 조준 페이즈 캠핑 가속 리셋
+  state.phaseStartPh = state.aimPhase;   // 이번 조준 시작 위상 기록(바퀴 수 계산 기준)
   // 바람: 불 땐 항상 ±0.5~1 세기(너무 약하게 안 불도록)
   state.windRaw = state.score < WIND_FROM ? 0 : (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.5);
 }
@@ -372,6 +382,11 @@ function gameOver() {
 // ---------- 업데이트 ----------
 function update(dt) {
   state.time += dt;
+  // 보드 세로 중심: 플레이 중엔 위쪽(0.37), 메뉴/패널에선 가운데(0.5)로 부드럽게 이동 → 패널과 중심 정렬
+  const panelOpen = (window.Leaderboard && window.Leaderboard.isOpen && window.Leaderboard.isOpen()) ||
+                    (window.Wall && window.Wall.isOpen && window.Wall.isOpen());
+  const cyTarget = (state.mode === 'playing' && !panelOpen) ? 0.37 : 0.5;
+  state.cyFrac += (cyTarget - state.cyFrac) * Math.min(1, dt * 7);
   const gg = geom();
   // 콤보 고조 강도 — 콤보 기반 목표치로 부드럽게 이징
   const heatTarget = state.mode === 'playing' ? clamp(state.combo / FIRE_COMBO, 0, 1) : 0;
@@ -385,10 +400,8 @@ function update(dt) {
 
   if (state.mode === 'playing') {
     if (state.phase === 'aim') {
-      state.phaseT += dt;
       state.aimPhase += aimRate() * waitAccel() * dt;
     } else if (state.phase === 'power') {
-      state.phaseT += dt;
       state.powPhase += powRate() * waitAccel() * dt;
       setChargePitch(currentP());
     } else if (state.phase === 'fly') {
@@ -468,15 +481,19 @@ function render() {
 }
 
 function drawBackground(g) {
-  // 순검정 바탕
-  ctx.fillStyle = '#000';
+  // 너무 어둡지 않게 — 깊은 네이비 그라데이션(위가 밝고 아래로 차분하게)
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#273450');
+  bg.addColorStop(0.55, '#1a2332');
+  bg.addColorStop(1, '#11161f');
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
-  // 다트보드 뒤 스포트라이트 — 또렷하게 보이도록 밝게 (위에서 비추는 느낌)
+  // 다트보드 뒤 스포트라이트 — 살짝 더 밝게(보드가 또렷하게 떠 보이도록)
   const sx = g.cx, sy = g.cy - g.R * 0.12;
   const sp = ctx.createRadialGradient(sx, sy, g.R * 0.2, sx, sy, g.R * 2.45);
-  sp.addColorStop(0, 'rgba(160,180,216,.52)');
-  sp.addColorStop(0.42, 'rgba(88,106,144,.24)');
-  sp.addColorStop(0.75, 'rgba(42,52,74,.09)');
+  sp.addColorStop(0, 'rgba(190,206,236,.50)');
+  sp.addColorStop(0.42, 'rgba(122,142,182,.22)');
+  sp.addColorStop(0.75, 'rgba(72,86,118,.09)');
   sp.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = sp;
   ctx.fillRect(0, 0, W, H);
@@ -1056,7 +1073,7 @@ function onPress() {
   if (state.mode === 'playing' && state.phase === 'aim') {
     state.lockX = currentSweepX(geom());
     state.powPhase = 0;       // 게이지를 바닥부터 차오르게
-    state.phaseT = 0;         // 파워 페이즈 캠핑 가속 리셋
+    state.phaseStartPh = 0;   // 파워 시작 위상(0)부터 바퀴 수 계산
     state.phase = 'power';
     startCharge();
   }
