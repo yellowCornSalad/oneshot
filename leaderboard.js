@@ -50,9 +50,9 @@
       return typeof r === 'string' ? r : 'network';
     } catch (e) { return 'network'; }
   }
-  // 순위 조회는 "닉네임별 최고점" 뷰에서 — 같은 사람(닉네임)은 최고 점수 1개만 표시.
-  // (뷰가 아직 없으면 원본 테이블로 자동 폴백)
-  let readTable = 'dart_best_scores';
+  // 순위 목록/내순위/이웃은 원본 기록(dart_scores) 기준 — 같은 사람의 여러 기록 허용(도배 OK).
+  // 사람 단위 중복 제거는 "축하 띠지"에만 적용한다.
+  let readTable = TABLE;
   async function readRows(query) {
     for (;;) {
       const res = await fetch(URL + '/rest/v1/' + readTable + query, { headers: headers() });
@@ -82,6 +82,16 @@
   async function neighborBelow(score) {
     try { const rows = await readRows('?select=name,score&score=lt.' + encodeURIComponent(score) + '&order=score.desc&limit=1'); return rows[0] || null; }
     catch (e) { return null; }
+  }
+
+  // 띠지용: 닉네임별 최고점 뷰에서 1만점 이상 상위 N명만 (뷰 없으면 원본에서 받아 JS로 dedup)
+  async function celebrateRows() {
+    try {
+      const res = await fetch(URL + '/rest/v1/dart_best_scores?select=name,score&score=gte.' + CELEBRATE_AT + '&order=score.desc&limit=' + CELEBRATE_TOP, { headers: headers() });
+      if (res.ok) return res.json();
+    } catch (e) {}
+    try { return await readRows('?select=name,score&score=gte.' + CELEBRATE_AT + '&order=score.desc&limit=100'); }
+    catch (e) { return []; }
   }
 
   // ---------- 익명 닉네임 ----------
@@ -173,7 +183,7 @@
     if (!winners.length) { boardCelebrate.classList.add('hidden'); boardCelebrate.innerHTML = ''; return; }
     const sep = '   ✦   ';
     const line = winners.map(function (w) {
-      return '🎊 ' + escapeHtml(w.name) + '님 ' + w.score.toLocaleString() + '점 돌파 축하드립니다! 🎉';
+      return '🎊 ' + escapeHtml(w.name) + '님 ' + w.score.toLocaleString() + '점 축하드립니다! 🎉';
     }).join(sep);
     // 끊김 없는 마퀴를 위해 같은 내용을 두 번 이어붙임
     const dur = Math.max(14, winners.length * 8);   // 1명당 ~8초 — 인원이 늘어도 같은 체감 속도
@@ -195,7 +205,7 @@
     boardList.innerHTML = '<div class="board-loading">불러오는 중…</div>';
     try {
       const top = await topScores(TOP_N);
-      renderCelebrate(top);   // 🎉 1만점 돌파자 축하 띠지
+      renderCelebrate(await celebrateRows());   // 🎉 1만점 축하 띠지(사람당 1개·상위 5명)
       let pos = null;
       // 내가 상위 20위 밖이면 내 앞/뒤 사람을 따로 불러온다
       if (mine && typeof mine.rank === 'number' && mine.rank > TOP_N) {
