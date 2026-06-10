@@ -443,3 +443,54 @@ html, body {
 @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes shine { 0% { transform: translateX(-120%); } 55%,100% { transform: translateX(120%); } }
 @keyframes celebPop { 0% { transform: scale(.85); opacity: 0; } 60% { transform: scale(1.05); } 100% { transform: scale(1); opacity: 1; } }
+
+
+/* ============================================================
+ * 밝은 패널 테마 — 글씨 가독성 ↑ ('검정 배경' 탈피)
+ * 글씨가 있는 화면(시작/게임오버/리더보드/게시판)은 밝은 바탕 + 진한 글씨.
+ * 플레이 중 캔버스는 불꽃/스포트라이트 연출 때문에 어둡게 유지.
+ * ============================================================ */
+.panel {
+  color: #1b2433;
+  background: linear-gradient(180deg, #f5f8fc, #e6edf6);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.panel h1, .panel h2 { color: #16202e; text-shadow: none; }
+.panel h1 span { color: #e5484d; }
+.panel p { opacity: 1; color: #3c4859; }
+.panel p.hint { color: #5b6a7c; }
+.panel b.gold, .panel .gold { color: #b9770a; }
+
+.final { color: #c8860a; text-shadow: none; }
+#final-best { color: #6b7688; opacity: 1; }
+#over-goal { color: #b9770a; text-shadow: none; }
+
+.cta, .btn { background: #1b2433; color: #fff; }
+.btn.ghost { background: transparent; color: #1b2433; box-shadow: inset 0 0 0 2px rgba(27,36,51,.22); }
+.share-btn { background: #fee500; color: #3a2c00; }
+
+#name-input { background: #fff; color: #1b2433; box-shadow: inset 0 0 0 1px rgba(27,36,51,.16); }
+#name-input::placeholder { color: rgba(27,36,51,.4); }
+#name-input:focus { background: #fff; box-shadow: 0 0 0 2px #c8860a; }
+#submit-msg, #share-msg, #wall-msg { color: #b9770a; }
+
+.missions .mi { background: rgba(27,36,51,.06); color: #2a3547; }
+.missions .mi b { color: #b9770a; }
+.missions .mtitle, .missions .mlife { color: #5a6678; opacity: 1; }
+.missions .mi.ok { background: rgba(34,160,90,.16); color: #1c7a43; }
+
+#board-myrank { color: #b9770a; }
+.board-row { background: rgba(27,36,51,.05); color: #1b2433; }
+.board-row .rk { opacity: 1; }
+.board-row.mine { background: rgba(255,201,90,.32); box-shadow: inset 0 0 0 1.5px #d9a300; }
+.board-gap { color: #8893a3; }
+.board-empty, .board-loading { color: #5a6678; opacity: 1; }
+.board-empty code { background: rgba(27,36,51,.08); }
+
+.wall-row { background: rgba(27,36,51,.05); }
+.wall-meta .wn { color: #b9770a; }
+.wall-meta .wt { color: #7a8698; opacity: 1; }
+.wall-row .wb { color: #1b2433; }
+#wall-input { background: #fff; color: #1b2433; box-shadow: inset 0 0 0 1px rgba(27,36,51,.16); }
+#wall-input::placeholder { color: rgba(27,36,51,.4); }
