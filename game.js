@@ -381,9 +381,9 @@ function update(dt) {
 
   if (state.mode === 'playing') {
     if (state.phase === 'aim') {
-      state.aimPhase += aimRate() * waitAccel() * dt;
+      state.aimPhase += aimRate() * dt;
     } else if (state.phase === 'power') {
-      state.powPhase += powRate() * waitAccel() * dt;
+      state.powPhase += powRate() * dt;
       setChargePitch(currentP());
     } else if (state.phase === 'fly') {
       const d = state.dart;
@@ -587,12 +587,10 @@ function drawAimAndPower(g) {
   const top = g.cy - g.R * 1.07, bot = g.cy + g.R * 1.07;
   const left = g.cx - g.R * 1.07, right = g.cx + g.R * 1.07;
 
-  const acc = (waitAccel() - 1) / (WAIT_ACCEL_CAP - 1);   // 0..1 캠핑 가속 정도(오래 끌수록↑)
   if (state.phase === 'aim') {
     const x = currentSweepX(g);
-    const gch = Math.round(255 - 150 * acc), bch = Math.round(255 - 205 * acc);  // 흰색→붉은주황(서두르라는 신호)
-    ctx.strokeStyle = 'rgba(255,' + gch + ',' + bch + ',.9)';
-    ctx.lineWidth = 2 + acc * 1.6;
+    ctx.strokeStyle = 'rgba(255,255,255,.85)';
+    ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke();
     drawTriMarker(x, top - 6, true);
   } else if (state.phase === 'power') {
@@ -601,9 +599,7 @@ function drawAimAndPower(g) {
     ctx.strokeStyle = 'rgba(255,255,255,.55)';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(state.lockX, top); ctx.lineTo(state.lockX, bot); ctx.stroke();
-    const gch = Math.round(211 - 121 * acc), bch = Math.round(94 - 44 * acc);     // 골드→붉은주황
-    ctx.strokeStyle = 'rgba(255,' + gch + ',' + bch + ',.95)';
-    ctx.lineWidth = 2 + acc * 1.6;
+    ctx.strokeStyle = 'rgba(255,211,94,.95)';
     ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
     ctx.fillStyle = '#ffd35e';
     ctx.beginPath(); ctx.arc(state.lockX, y, 4.5, 0, Math.PI * 2); ctx.fill();
