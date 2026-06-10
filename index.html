@@ -10,7 +10,7 @@
   <meta property="og:description" content="한 손가락 다트 게임 — 도전해서 랭킹 올려봐!" />
   <meta property="og:url" content="https://yellowcornsalad.github.io/oneshot/" />
   <title>ONESHOT</title>
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
   <div id="app">
@@ -43,6 +43,7 @@
       <h1>ONE<span>SHOT</span></h1>
       <p><b>누르면</b> 좌우 조준 멈춤 · <b>떼면</b> 위아래 파워로 던지기</p>
       <p class="hint">🎯 <b class="gold">5발</b>로 시작 · 던질 때마다 1발 소모 · 다 떨어지면 끝!<br />정중앙 <b class="gold">BULL</b> 적중 = 100점 + 다트 <b class="gold">+2</b> + 🔥<b class="gold">화르륵</b> 대폭발 🔥</p>
+      <div id="missions" class="missions"></div>
       <div class="cta">탭하여 시작</div>
       <div class="start-links">
         <button class="btn ghost" id="start-board">🏆 리더보드</button>
@@ -56,6 +57,7 @@
       <div class="final"><span id="final-score">0</span></div>
       <div id="final-best">BEST 0</div>
       <div id="over-goal"></div>
+      <div id="mission-result" class="missions"></div>
       <input id="name-input" type="text" maxlength="20" placeholder="닉네임 (익명)" autocomplete="off" spellcheck="false" />
       <div class="btn-row">
         <button class="btn ghost" id="over-again">다시하기</button>
@@ -91,9 +93,9 @@
     </div>
   </div>
 
-  <script src="supabase-config.js?v=6"></script>
-  <script src="game.js?v=6"></script>
-  <script src="leaderboard.js?v=6"></script>
-  <script src="wall.js?v=6"></script>
+  <script src="supabase-config.js?v=7"></script>
+  <script src="game.js?v=7"></script>
+  <script src="leaderboard.js?v=7"></script>
+  <script src="wall.js?v=7"></script>
 </body>
 </html>

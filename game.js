@@ -33,6 +33,19 @@ const MAX_STUCK  = 7;                         // 보드에 남겨두는 다트 �
 const FIRE_COMBO = 6;                         // 이 콤보부터 🔥 ON FIRE
 const FIRE_BONUS = 2;                         // ON FIRE 시 점수 추가 배수
 
+// 미션 풀 — 매판 랜덤 3개. 보상은 보너스 다트(점수 인플레 없이 1만점 밸런스 유지).
+const MISSION_POOL = [
+  { id: 'bull2',    desc: 'BULL 2개 적중',  reward: 1, ok: function (s) { return s.bullCount >= 2; } },
+  { id: 'bull3',    desc: 'BULL 3개 적중',  reward: 2, ok: function (s) { return s.bullCount >= 3; } },
+  { id: 'streak2',  desc: 'BULL 2연속',     reward: 2, ok: function (s) { return s.bullStreakMax >= 2; } },
+  { id: 'nomiss6',  desc: '노미스 6발',      reward: 1, ok: function (s) { return s.noMissMax >= 6; } },
+  { id: 'nomiss10', desc: '노미스 10발',     reward: 2, ok: function (s) { return s.noMissMax >= 10; } },
+  { id: 'combo12',  desc: '12 콤보 달성',    reward: 2, ok: function (s) { return s.comboMax >= 12; } },
+  { id: 'onfire',   desc: '🔥 ON FIRE 진입', reward: 1, ok: function (s) { return s.firedEver; } },
+  { id: 'score800', desc: '한 판 800점',     reward: 1, ok: function (s) { return s.score >= 800; } },
+];
+const MISSIONS_PER_GAME = 3;
+
 // 점수 링: [중심에서의 최대 반지름 비율, 점수, 색]  — 안쪽부터
 const RINGS = [
   [0.09, 100, '#ffd35e'], // BULL (골드)
@@ -78,6 +91,8 @@ const elDanger = document.getElementById('danger');
 const elOverGoal = document.getElementById('over-goal');
 const elShareBtn = document.getElementById('over-share');
 const elShareMsg = document.getElementById('share-msg');
+const elMissions = document.getElementById('missions');
+const elMissionResult = document.getElementById('mission-result');
 const SHARE_URL = 'https://yellowcornsalad.github.io/oneshot/';
 
 // ---------- 상태 ----------
@@ -109,6 +124,9 @@ const state = {
   emberT: 0,          // 잔불 스폰 누적시간
   startBest: 0,       // 이번 판 시작 시점 최고기록(신기록 판정)
   recordHit: false,   // 이번 판 신기록 연출 했는지
+  missions: [],       // 이번 판 미션 3개
+  bullCount: 0, bullStreak: 0, bullStreakMax: 0,   // 미션 추적
+  noMissStreak: 0, noMissMax: 0, comboMax: 0, firedEver: false,
 };
 
 // ---------- 기하 (W,H 로부터 매 프레임 계산 → 리사이즈에 강함) ----------
@@ -164,20 +182,65 @@ function resetStats() {
   state.score = 0; state.combo = 0; state.darts = DARTS0; state.throws = 0;
   state.stuck = []; state.parts = []; state.pops = []; state.waves = []; state.glow = null; state.shake = 0;
   state.onFire = false; state.fireHeat = 0; state.coolT = 0; state.emberT = 0; state.recordHit = false;
+  state.bullCount = 0; state.bullStreak = 0; state.bullStreakMax = 0;
+  state.noMissStreak = 0; state.noMissMax = 0; state.comboMax = 0; state.firedEver = false;
   state.dart = null;
   if (elDanger) elDanger.classList.remove('on');
   updateHud();
 }
+
+// ---------- 미션 ----------
+function assignMissions() {
+  const pool = MISSION_POOL.slice();
+  for (let i = pool.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+  state.missions = pool.slice(0, MISSIONS_PER_GAME).map(function (m) {
+    return { id: m.id, desc: m.desc, reward: m.reward, ok: m.ok, done: false };
+  });
+}
+function checkMissions(x, y) {
+  for (let i = 0; i < state.missions.length; i++) {
+    const m = state.missions[i];
+    if (!m.done && m.ok(state)) {
+      m.done = true;
+      state.darts = Math.min(DART_CAP, state.darts + m.reward);   // 보상 = 보너스 다트
+      addPop(x, y - 80, '🎯 미션! +' + m.reward + '🎯', '#7fd1ff', true);
+      playMissionDone();
+      saveLifetimeMissions(loadLifetimeMissions() + 1);
+    }
+  }
+}
+function loadLifetimeMissions() { try { return parseInt(localStorage.getItem('oneshot_missions') || '0', 10) || 0; } catch (e) { return 0; } }
+function saveLifetimeMissions(v) { try { localStorage.setItem('oneshot_missions', String(v)); } catch (e) {} }
+function renderMissionsStart() {
+  if (!elMissions) return;
+  const items = state.missions.map(function (m) { return '<span class="mi">' + m.desc + ' <b>+' + m.reward + '🎯</b></span>'; }).join('');
+  const life = loadLifetimeMissions();
+  elMissions.innerHTML = '<div class="mtitle">🎯 이번 판 도전</div>' + items + (life > 0 ? '<div class="mlife">🏅 누적 미션 ' + life + '개</div>' : '');
+}
+function renderMissionResult() {
+  if (!elMissionResult) return;
+  const done = state.missions.filter(function (m) { return m.done; }).length;
+  const items = state.missions.map(function (m) {
+    return '<span class="mi' + (m.done ? ' ok' : '') + '">' + (m.done ? '✅' : '⬜') + ' ' + m.desc + '</span>';
+  }).join('');
+  elMissionResult.innerHTML = '<div class="mtitle">미션 ' + done + ' / ' + state.missions.length + '</div>' + items;
+}
+function playMissionDone() { blip(660, 0.12, 'triangle', 0.13); setTimeout(function () { blip(990, 0.16, 'triangle', 0.12); }, 90); }
+
 function resetGame() {
   state.mode = 'ready';
   state.phase = 'aim';
   resetStats();
+  assignMissions();
+  renderMissionsStart();
   showPanel('start');
 }
 function startGame() {
   if (state.mode === 'playing') return;
+  const fromOver = state.mode === 'over';
   resetStats();
-  state.startBest = state.best;   // 이번 판 동안 깰 목표(신기록 판정)
+  if (fromOver) assignMissions();   // 다시하기 → 새 미션 (시작화면 경유 땐 위에서 배정한 걸 유지)
+  state.startBest = state.best;     // 이번 판 동안 깰 목표(신기록 판정)
   state.mode = 'playing';
   hidePanels();
   if (window.Leaderboard && window.Leaderboard.onStart) window.Leaderboard.onStart();  // 플레이 토큰 발급
@@ -218,6 +281,13 @@ function resolveHit() {
     const isBull = val === 100;
     const nearBull = !isBull && frac < 0.135;   // BULL 을 아슬하게 빗나감
 
+    // 미션 추적
+    state.noMissStreak++; state.noMissMax = Math.max(state.noMissMax, state.noMissStreak);
+    if (isBull) { state.bullCount++; state.bullStreak++; state.bullStreakMax = Math.max(state.bullStreakMax, state.bullStreak); }
+    else { state.bullStreak = 0; }
+    state.comboMax = Math.max(state.comboMax, state.combo);
+    if (state.onFire) state.firedEver = true;
+
     const baseMult = multiplier();
     const effMult = baseMult * (state.onFire ? FIRE_BONUS : 1);   // ON FIRE면 추가 배수
     const pts = val * effMult;
@@ -256,6 +326,7 @@ function resolveHit() {
     const nearMiss = frac < 1.18;       // 보드 바로 바깥 = 아슬아슬
     state.combo = 0;
     state.onFire = false;
+    state.noMissStreak = 0; state.bullStreak = 0;   // 미션 연속 끊김
     addPop(d.x1, d.y1, 'MISS', '#e5484d', false);
     burst(d.x1, d.y1, '#e5484d', 8);
     state.shake = Math.max(state.shake, 0.22);
@@ -263,6 +334,8 @@ function resolveHit() {
     if (wasFire) { state.coolT = 0.6; playCool(); }   // 콤보 끊김: 식는 연출만(텍스트 없음)
     else if (nearMiss) flashText('SO CLOSE!');
   }
+
+  checkMissions(d.x1, d.y1);   // 미션 달성 체크(보너스 다트)
 
   // 다트 수 변화 펄스
   const net = state.darts - prevDarts;
@@ -281,6 +354,7 @@ function gameOver() {
   state.mode = 'over';
   state.shake = 0.42;
   if (elDanger) elDanger.classList.remove('on');
+  renderMissionResult();
   if (elOverGoal) {
     if (state.startBest > 0 && state.score > state.startBest) elOverGoal.textContent = '🎉 자체 최고기록 경신!';
     else if (state.startBest > 0) elOverGoal.textContent = '최고기록까지 단 ' + (state.startBest - state.score) + '점!';

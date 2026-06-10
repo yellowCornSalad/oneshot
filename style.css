@@ -305,6 +305,29 @@ html, body {
 }
 #share-msg { min-height: 16px; font-size: 13px; color: var(--gold); }
 
+/* ---------- 미션/도전과제 ---------- */
+.missions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 8px;
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+.missions:empty { display: none; }
+.missions .mtitle { width: 100%; font-size: 12px; font-weight: 800; letter-spacing: 1px; opacity: .6; margin-bottom: 1px; }
+.missions .mi {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.missions .mi b { color: var(--gold); font-weight: 800; }
+.missions .mi.ok { background: rgba(70,211,105,.18); color: #9ff0b5; }
+.missions .mlife { width: 100%; font-size: 12px; opacity: .55; margin-top: 2px; }
+
 /* ---------- 리더보드 ---------- */
 #board-myrank { font-size: 15px; font-weight: 700; color: var(--gold); min-height: 20px; }
 .board-list {
