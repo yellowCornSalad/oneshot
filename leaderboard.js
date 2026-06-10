@@ -38,12 +38,12 @@
   }
   // 점수 제출 → 서버 함수가 토큰 서명·경과시간·타당성 검증 후 삽입.
   // 'ok' 또는 거부 사유(bad_sig/implausible/too_fast/used/…) 또는 'network' 반환.
-  async function submitScore(name, score) {
+  async function submitScore(name, score, throws) {
     try {
       const res = await fetch(URL + '/rest/v1/rpc/submit_dart_score', {
         method: 'POST',
         headers: headers({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ p_token: playToken || '', p_name: name, p_score: score }),
+        body: JSON.stringify({ p_token: playToken || '', p_name: name, p_score: score, p_throws: throws }),
       });
       if (!res.ok) return 'network';
       const r = await res.json();
@@ -226,12 +226,13 @@
     const name = clean(nameInput.value);
     nameInput.value = name;
     const score = window.Oneshot ? window.Oneshot.getScore() : 0;
+    const throws = window.Oneshot && window.Oneshot.getThrows ? window.Oneshot.getThrows() : null;
     if (!ready) { openBoard({ name: name, score: score, rank: null }); return; }
     if (!playToken) { setMsg('연결 문제로 등록할 수 없어요. 새로고침 후 다시 시도해주세요.'); return; }
     submitBtn.disabled = true;
     setMsg('등록 중…');
     let result;
-    try { result = await submitScore(name, score); } catch (e) { result = 'network'; }
+    try { result = await submitScore(name, score, throws); } catch (e) { result = 'network'; }
     if (result === 'ok') {
       let rank = null;
       try { rank = await rankOf(score); } catch (e) {}

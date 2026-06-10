@@ -1098,6 +1098,7 @@ window.Oneshot = {
   getScore: function () { return state.score; },
   getBest: function () { return state.best; },
   getDarts: function () { return state.darts; },
+  getThrows: function () { return state.throws; },
 };
 
 // ---------- 시작 ----------

@@ -7,8 +7,18 @@ create table if not exists public.dart_scores (
   id          uuid primary key default gen_random_uuid(),
   name        text not null check (char_length(name) between 1 and 20),
   score       integer not null check (score >= 0 and score <= 10000000),
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  elapsed_ms  bigint,                                  -- 토큰 발급~제출 경과(서버 측정, 위조 탐지용)
+  throws      int,                                     -- 던진 횟수(클라 보고, 검토 참고용)
+  auto_flag   boolean not null default false,          -- 사람이 낼 수 없는 패턴 → 축하 띠지에서 격리
+  verified    boolean not null default false           -- 상품(치킨) 지급은 사람이 확인 후 이 값을 true 로
 );
+-- 기존 테이블에 컬럼 추가(이미 만들어진 경우):
+alter table public.dart_scores
+  add column if not exists elapsed_ms bigint,
+  add column if not exists throws int,
+  add column if not exists auto_flag boolean not null default false,
+  add column if not exists verified boolean not null default false;
 
 -- 정렬 성능용 인덱스 (점수 내림차순 조회)
 create index if not exists dart_scores_score_idx on public.dart_scores (score desc, created_at asc);
@@ -99,10 +109,11 @@ begin
   return payload || ':' || encode(extensions.hmac(payload, secret, 'sha256'),'hex');
 end $fn$;
 
-create or replace function public.submit_dart_score(p_token text, p_name text, p_score int)
+drop function if exists public.submit_dart_score(text, text, int);
+create or replace function public.submit_dart_score(p_token text, p_name text, p_score int, p_throws int default null)
 returns text language plpgsql security definer set search_path = public, extensions as $fn$
 declare parts text[]; sid uuid; iat bigint; sig text; secret text; expect text;
-        elapsed_ms bigint; max_pps int := 500; nm text;
+        elapsed_ms bigint; max_pps int := 400; abs_cap int := 50000; nm text; v_flag boolean := false;
 begin
   parts := string_to_array(coalesce(p_token,''), ':');
   if coalesce(array_length(parts,1),0) <> 3 then return 'bad_token'; end if;
@@ -111,20 +122,31 @@ begin
   select v into secret from public.dart_secret where k='hmac';
   expect := encode(extensions.hmac(parts[1]||':'||parts[2], secret, 'sha256'),'hex');
   if sig <> expect then return 'bad_sig'; end if;                 -- 토큰 위조
+  -- 토큰을 서명검증 직후 즉시 소모 → 실패 시도로 경계값을 탐색하는 공격 차단(거부돼도 토큰 소멸)
+  begin insert into public.dart_used(session_id) values (sid);
+  exception when unique_violation then return 'used'; end;        -- 재사용 방지
   elapsed_ms := (extract(epoch from now())*1000)::bigint - iat;
   if elapsed_ms < 1500 then return 'too_fast'; end if;            -- 즉시 제출 차단
   if elapsed_ms > 3600000 then return 'expired'; end if;
-  if p_score < 0 or p_score > 10000000 then return 'bad_score'; end if;
-  if p_score > (max_pps * (elapsed_ms/1000.0)) then return 'implausible'; end if;  -- 시간당 타당성
-  begin insert into public.dart_used(session_id) values (sid);
-  exception when unique_violation then return 'used'; end;        -- 재사용 방지
-  nm := left(coalesce(nullif(btrim(p_name),''),'익명'), 20);
-  insert into public.dart_scores(name, score) values (nm, p_score);
+  if p_score < 0 or p_score > abs_cap then return 'implausible'; end if;            -- 절대 상한(말도 안 되는 점수)
+  if p_score > (max_pps * (elapsed_ms/1000.0)) then return 'implausible'; end if;   -- 시간당 타당성
+  -- 상품(1만점+) 구간: 사람이 낼 수 없는 패턴이면 자동 의심 플래그(띠지 격리·검토 대상). 제출 자체는 허용.
+  if p_score >= 10000 and elapsed_ms > 0 then
+    if p_score::numeric / (elapsed_ms/1000.0) > 300 then v_flag := true; end if;    -- 평균 초당점수 과다(대기 최소화 위조)
+    if p_throws is not null and p_throws > 0 then
+      if p_score::numeric / p_throws > 600 then v_flag := true; end if;             -- 던지기당 평균 과다
+      if (p_throws::numeric * 500) > elapsed_ms then v_flag := true; end if;        -- 던지기 수가 시간 대비 불가능
+    end if;
+  end if;
+  nm := left(regexp_replace(coalesce(btrim(p_name),''), '[[:cntrl:]<>]', '', 'g'), 20);  -- 서버측 위생(제어문자·<> 제거)
+  if nm = '' then nm := '익명'; end if;
+  insert into public.dart_scores(name, score, elapsed_ms, throws, auto_flag)
+    values (nm, p_score, elapsed_ms, p_throws, v_flag);
   return 'ok';
 end $fn$;
 
 grant execute on function public.start_dart_session() to anon;
-grant execute on function public.submit_dart_score(text, text, int) to anon;
+grant execute on function public.submit_dart_score(text, text, int, int) to anon;
 
 
 -- ──────────────────────────────────────────────────────────────
@@ -133,5 +155,20 @@ create or replace view public.dart_best_scores
 with (security_invoker = on) as
 select distinct on (name) name, score, created_at
 from public.dart_scores
+where auto_flag = false                 -- 자동 의심 플래그된 위조 의심 점수는 축하 띠지에서 제외
 order by name, score desc, created_at asc;
 grant select on public.dart_best_scores to anon;
+
+
+-- ──────────────────────────────────────────────────────────────
+-- 상품(치킨) 지급 검토용 쿼리 (대시보드 SQL Editor에서 사람이 직접 실행)
+--   클라이언트 게임은 점수 위조를 100% 막을 수 없으므로, 상품은 "사람 확인 후 지급"이 유일한 확실한 방어다.
+--
+-- 1) 1만점+ 후보 검토(의심 신호 같이 보기): auto_flag=true 거나 elapsed/throws 가 어색하면 가짜 가능성↑
+--   select name, score, elapsed_ms, throws, auto_flag, verified, created_at
+--     from public.dart_scores where score >= 10000 order by created_at desc;
+-- 2) 진짜 우승자로 확인되면 지급 대상으로 표시:
+--   update public.dart_scores set verified = true where id = '<해당 행 id>';
+-- 3) 실제 지급 대상(사람이 확인한 우승자)만:
+--   select name, max(score) as score from public.dart_scores
+--     where verified = true group by name order by score desc;
