@@ -1,3 +1,6 @@
+/* 게임 전체를 즉시실행함수(IIFE)로 감싼다 → 내부 변수(state·RINGS·점수 등)가
+ * 콘솔/개발자도구에서 이름으로 안 잡혀 직접 수정 불가(캐주얼 점수 변조 방지). */
+(function () {
 'use strict';
 
 /* =========================================================================
@@ -38,6 +41,8 @@ const RINGS = [
   [0.62,  10, '#efe6cf'], // 크림
   [1.00,   5, '#243244'], // 다크 (가장 바깥)
 ];
+RINGS.forEach(function (r) { Object.freeze(r); });
+Object.freeze(RINGS);   // 점수값(BULL=100 등) 변조 방지
 // 다트 보충: 정중앙 BULL 적중에만 +2. 그 외엔 보충 없음(매 던지기 -1).
 function refillFor(val) { return val === 100 ? 2 : 0; }
 
@@ -989,3 +994,5 @@ window.Oneshot = {
 resize();
 resetGame();
 requestAnimationFrame(frame);
+
+})();
