@@ -20,6 +20,7 @@
 // ---------- 튜닝 상수 ----------
 const AIM_RATE0 = 1.05, AIM_RATE1 = 2.60;   // 좌우 조준선 속도(주기/초): 시작 → 최대(고득점 구간 가속)
 const POW_RATE0 = 1.20, POW_RATE1 = 2.90;   // 상하 파워 게이지 속도
+const WAIT_ACCEL = 0.75, WAIT_ACCEL_CAP = 2.8; // 한 페이즈에서 오래 망설일수록(캠핑) 조준/게이지가 점점 빨라짐 — 호딩 억제
 const RAMP_SCORE = 1600;                     // 이 점수에서 난이도 최대치
 const WIND_FROM  = 300;                      // 이 점수부터 바람 등장
 const WIND_MAX   = 0.85;                      // 바람 최대 세기(보드 반지름 비율)
@@ -106,6 +107,7 @@ const state = {
   throws: 0,
   aimPhase: 0,        // 좌우 조준선 위상
   powPhase: 0,        // 상하 게이지 위상
+  phaseT: 0,          // 현재 페이즈(조준/파워)에 머문 시간 → 오래 끌수록 가속(캠핑 방지)
   lockX: 0,           // 멈춘 가로 위치(px)
   lockP: 0.5,         // 멈춘 게이지 값(0~1)
   windRaw: 0,         // 이번 던지기 바람 방향(-1~1)
@@ -158,6 +160,8 @@ function diff() {
 }
 function aimRate() { return lerp(AIM_RATE0, AIM_RATE1, diff()); }
 function powRate() { return lerp(POW_RATE0, POW_RATE1, diff()); }
+// 한 페이즈에서 오래 망설일수록 점점 빨라지는 배수(완벽한 순간을 무한정 기다리는 캠핑 억제)
+function waitAccel() { return clamp(1 + WAIT_ACCEL * state.phaseT, 1, WAIT_ACCEL_CAP); }
 function windAmp(g) {
   if (state.score < WIND_FROM) return 0;
   return (0.4 + 0.6 * diff()) * WIND_MAX * g.R;   // 등장하자마자 체감, diff(점수+여분다트)로 강해짐
@@ -248,6 +252,7 @@ function startGame() {
 }
 function newThrow() {
   state.phase = 'aim';
+  state.phaseT = 0;   // 조준 페이즈 캠핑 가속 리셋
   // 바람: 불 땐 항상 ±0.5~1 세기(너무 약하게 안 불도록)
   state.windRaw = state.score < WIND_FROM ? 0 : (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.5);
 }
@@ -380,9 +385,11 @@ function update(dt) {
 
   if (state.mode === 'playing') {
     if (state.phase === 'aim') {
-      state.aimPhase += aimRate() * dt;
+      state.phaseT += dt;
+      state.aimPhase += aimRate() * waitAccel() * dt;
     } else if (state.phase === 'power') {
-      state.powPhase += powRate() * dt;
+      state.phaseT += dt;
+      state.powPhase += powRate() * waitAccel() * dt;
       setChargePitch(currentP());
     } else if (state.phase === 'fly') {
       const d = state.dart;
@@ -550,10 +557,12 @@ function drawAimAndPower(g) {
   const top = g.cy - g.R * 1.07, bot = g.cy + g.R * 1.07;
   const left = g.cx - g.R * 1.07, right = g.cx + g.R * 1.07;
 
+  const acc = (waitAccel() - 1) / (WAIT_ACCEL_CAP - 1);   // 0..1 캠핑 가속 정도(오래 끌수록↑)
   if (state.phase === 'aim') {
     const x = currentSweepX(g);
-    ctx.strokeStyle = 'rgba(255,255,255,.85)';
-    ctx.lineWidth = 2;
+    const gch = Math.round(255 - 150 * acc), bch = Math.round(255 - 205 * acc);  // 흰색→붉은주황(서두르라는 신호)
+    ctx.strokeStyle = 'rgba(255,' + gch + ',' + bch + ',.9)';
+    ctx.lineWidth = 2 + acc * 1.6;
     ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke();
     drawTriMarker(x, top - 6, true);
   } else if (state.phase === 'power') {
@@ -562,7 +571,9 @@ function drawAimAndPower(g) {
     ctx.strokeStyle = 'rgba(255,255,255,.55)';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(state.lockX, top); ctx.lineTo(state.lockX, bot); ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,211,94,.95)';
+    const gch = Math.round(211 - 121 * acc), bch = Math.round(94 - 44 * acc);     // 골드→붉은주황
+    ctx.strokeStyle = 'rgba(255,' + gch + ',' + bch + ',.95)';
+    ctx.lineWidth = 2 + acc * 1.6;
     ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
     ctx.fillStyle = '#ffd35e';
     ctx.beginPath(); ctx.arc(state.lockX, y, 4.5, 0, Math.PI * 2); ctx.fill();
@@ -740,28 +751,34 @@ function drawWind(g) {
   if (state.mode !== 'playing' || state.score < WIND_FROM) return;
   const amp = windAmp(g);
   if (amp <= 0) return;
-  // HUD(상단 점수/베스트)와 겹치지 않도록 보드 바로 위에 배치
-  const cx = W / 2, y = Math.max(H * 0.15, g.cy - g.R * 1.07 - 18);
   const dir = state.windRaw >= 0 ? 1 : -1;
-  const len = 16 + Math.abs(state.windRaw) * 44;
+  const strength = Math.abs(state.windRaw);             // 0.5~1
+  const cx = W / 2;
+  const y = Math.max(H * 0.13, g.cy - g.R * 1.07 - 32); // 보드 위로 충분히 띄워 십자선과 분리
+  const len = 30 + strength * 40;
+  const halfW = len + 34;
   ctx.save();
-  ctx.globalAlpha = 0.85;
-  ctx.strokeStyle = '#7fd1ff';
-  ctx.fillStyle = '#7fd1ff';
-  ctx.lineWidth = 3;
-  ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(cx - dir * len, y); ctx.lineTo(cx + dir * len, y); ctx.stroke();
+  // 배경 알약 — 보드/십자선 위에서도 화살표가 또렷하게
+  ctx.fillStyle = 'rgba(8,12,20,.66)';
+  roundRect(cx - halfW, y - 22, halfW * 2, 36, 16);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(127,209,255,.22)'; ctx.lineWidth = 1; ctx.stroke();
+  // 라벨
+  ctx.font = '800 10px "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(150,220,255,.92)';
+  ctx.fillText('W I N D', cx, y - 9);
+  // 큼직한 화살표 — 강풍이면 주황 경고색, 길이로 세기 표현
+  const col = strength > 0.8 ? '#ff8a5b' : '#7fd1ff';
+  ctx.strokeStyle = col; ctx.fillStyle = col;
+  ctx.lineWidth = 5; ctx.lineCap = 'round';
+  const yy = y + 6;
+  ctx.beginPath(); ctx.moveTo(cx - dir * len, yy); ctx.lineTo(cx + dir * (len - 13), yy); ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(cx + dir * len, y);
-  ctx.lineTo(cx + dir * (len - 9), y - 6);
-  ctx.lineTo(cx + dir * (len - 9), y + 6);
+  ctx.moveTo(cx + dir * len, yy);
+  ctx.lineTo(cx + dir * (len - 17), yy - 11);
+  ctx.lineTo(cx + dir * (len - 17), yy + 11);
   ctx.closePath(); ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.font = '700 11px "Segoe UI", system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(127,209,255,.9)';
-  ctx.fillText('WIND', cx, y - 12);
-  ctx.textAlign = 'start';
   ctx.restore();
 }
 
@@ -1039,6 +1056,7 @@ function onPress() {
   if (state.mode === 'playing' && state.phase === 'aim') {
     state.lockX = currentSweepX(geom());
     state.powPhase = 0;       // 게이지를 바닥부터 차오르게
+    state.phaseT = 0;         // 파워 페이즈 캠핑 가속 리셋
     state.phase = 'power';
     startCharge();
   }

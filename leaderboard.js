@@ -182,11 +182,11 @@
       .slice(0, CELEBRATE_TOP);   // 상위 5명만
     if (!winners.length) { boardCelebrate.classList.add('hidden'); boardCelebrate.innerHTML = ''; return; }
     const sep = '   ✦   ';
-    const line = winners.map(function (w) {
-      return '🎊 ' + escapeHtml(w.name) + '님 ' + w.score.toLocaleString() + '점 축하드립니다! 🎉';
+    const line = winners.map(function (w, i) {
+      return (i === 0 ? '🏆 ' : '🎯 ') + escapeHtml(w.name) + ' ' + w.score.toLocaleString() + '점';
     }).join(sep);
     // 끊김 없는 마퀴를 위해 같은 내용을 두 번 이어붙임
-    const dur = Math.max(14, winners.length * 8);   // 1명당 ~8초 — 인원이 늘어도 같은 체감 속도
+    const dur = Math.max(22, winners.length * 11);   // 1명당 ~8초 — 인원이 늘어도 같은 체감 속도
     boardCelebrate.innerHTML = '<div class="celebrate-track" style="animation-duration:' + dur + 's">' + line + sep + line + sep + '</div>';
     boardCelebrate.classList.remove('hidden');
   }
