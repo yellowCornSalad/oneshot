@@ -16,6 +16,7 @@
   const LIMIT = cfg.LEADERBOARD_LIMIT || 100;
   const TOP_N = 20;                 // 메인 목록에 보여줄 상위 인원 수
   const CELEBRATE_AT = 10000;       // 이 점수 돌파 시 축하 띠지(복권 당첨 느낌)
+  const CELEBRATE_TOP = 5;          // 띠지에 올라가는 인원: 돌파자 중 점수 상위 N명만
   const TABLE = 'dart_scores';
   const ready = !!(URL && KEY && URL.indexOf('YOUR-') === -1 && KEY.indexOf('YOUR-') === -1);
 
@@ -167,7 +168,8 @@
       if (r.score >= CELEBRATE_AT && (!(r.name in best) || best[r.name] < r.score)) best[r.name] = r.score;
     });
     const winners = Object.keys(best).map(function (n) { return { name: n, score: best[n] }; })
-      .sort(function (a, b) { return b.score - a.score; });
+      .sort(function (a, b) { return b.score - a.score; })
+      .slice(0, CELEBRATE_TOP);   // 상위 5명만
     if (!winners.length) { boardCelebrate.classList.add('hidden'); boardCelebrate.innerHTML = ''; return; }
     const sep = '   ✦   ';
     const line = winners.map(function (w) {
