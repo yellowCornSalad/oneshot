@@ -177,6 +177,7 @@ function startGame() {
   state.startBest = state.best;   // 이번 판 동안 깰 목표(신기록 판정)
   state.mode = 'playing';
   hidePanels();
+  if (window.Leaderboard && window.Leaderboard.onStart) window.Leaderboard.onStart();  // 플레이 토큰 발급
   newThrow();
 }
 function newThrow() {

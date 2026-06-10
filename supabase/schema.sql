@@ -62,3 +62,66 @@ create policy "anyone can insert dart_messages"
   on public.dart_messages for insert to anon
   with check (char_length(name) between 1 and 20 and char_length(body) between 1 and 100);
 -- update/delete 정책 없음 → anon 키로 기존 글 수정·삭제 불가.
+
+
+-- ──────────────────────────────────────────────────────────────
+-- 서버측 점수 검증 (치팅 방어)
+-- anon 의 dart_scores 직접 INSERT 를 막고, 점수는 아래 함수로만 등록된다.
+--   1) 게임 시작 시 start_dart_session() → 서명된 1회용 토큰 발급
+--   2) 제출 시 submit_dart_score() → 토큰 서명·경과시간·타당성·재사용 검증 후 삽입
+-- ──────────────────────────────────────────────────────────────
+create extension if not exists pgcrypto with schema extensions;
+
+-- 직접 INSERT 차단(읽기만 남김) — 등록은 submit_dart_score() 로만
+drop policy if exists "anyone can insert dart_scores" on public.dart_scores;
+
+-- HMAC 비밀키(anon 접근 차단)
+create table if not exists public.dart_secret (k text primary key, v text not null);
+alter table public.dart_secret enable row level security;
+revoke all on public.dart_secret from anon, authenticated;
+insert into public.dart_secret(k, v)
+  values ('hmac', encode(extensions.gen_random_bytes(32), 'hex'))
+  on conflict (k) do nothing;
+
+-- 사용된 토큰(재사용 방지)
+create table if not exists public.dart_used (session_id uuid primary key, used_at timestamptz not null default now());
+alter table public.dart_used enable row level security;
+revoke all on public.dart_used from anon, authenticated;
+
+create or replace function public.start_dart_session()
+returns text language plpgsql security definer set search_path = public, extensions as $fn$
+declare sid uuid := gen_random_uuid();
+        iat bigint := (extract(epoch from now())*1000)::bigint;
+        secret text; payload text;
+begin
+  select v into secret from public.dart_secret where k='hmac';
+  payload := sid::text || ':' || iat::text;
+  return payload || ':' || encode(extensions.hmac(payload, secret, 'sha256'),'hex');
+end $fn$;
+
+create or replace function public.submit_dart_score(p_token text, p_name text, p_score int)
+returns text language plpgsql security definer set search_path = public, extensions as $fn$
+declare parts text[]; sid uuid; iat bigint; sig text; secret text; expect text;
+        elapsed_ms bigint; max_pps int := 500; nm text;
+begin
+  parts := string_to_array(coalesce(p_token,''), ':');
+  if coalesce(array_length(parts,1),0) <> 3 then return 'bad_token'; end if;
+  begin sid := parts[1]::uuid; iat := parts[2]::bigint; exception when others then return 'bad_token'; end;
+  sig := parts[3];
+  select v into secret from public.dart_secret where k='hmac';
+  expect := encode(extensions.hmac(parts[1]||':'||parts[2], secret, 'sha256'),'hex');
+  if sig <> expect then return 'bad_sig'; end if;                 -- 토큰 위조
+  elapsed_ms := (extract(epoch from now())*1000)::bigint - iat;
+  if elapsed_ms < 1500 then return 'too_fast'; end if;            -- 즉시 제출 차단
+  if elapsed_ms > 3600000 then return 'expired'; end if;
+  if p_score < 0 or p_score > 10000000 then return 'bad_score'; end if;
+  if p_score > (max_pps * (elapsed_ms/1000.0)) then return 'implausible'; end if;  -- 시간당 타당성
+  begin insert into public.dart_used(session_id) values (sid);
+  exception when unique_violation then return 'used'; end;        -- 재사용 방지
+  nm := left(coalesce(nullif(btrim(p_name),''),'익명'), 20);
+  insert into public.dart_scores(name, score) values (nm, p_score);
+  return 'ok';
+end $fn$;
+
+grant execute on function public.start_dart_session() to anon;
+grant execute on function public.submit_dart_score(text, text, int) to anon;

@@ -23,13 +23,31 @@
   function headers(extra) {
     return Object.assign({ apikey: KEY, Authorization: 'Bearer ' + KEY }, extra || {});
   }
+  // 서버 검증용 1회용 플레이 토큰(게임 시작 때 발급받음)
+  let playToken = null;
+  async function fetchToken() {
+    playToken = null;
+    if (!ready) return;
+    try {
+      const res = await fetch(URL + '/rest/v1/rpc/start_dart_session', {
+        method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: '{}',
+      });
+      if (res.ok) { const t = await res.json(); if (typeof t === 'string') playToken = t; }
+    } catch (e) {}
+  }
+  // 점수 제출 → 서버 함수가 토큰 서명·경과시간·타당성 검증 후 삽입.
+  // 'ok' 또는 거부 사유(bad_sig/implausible/too_fast/used/…) 또는 'network' 반환.
   async function submitScore(name, score) {
-    const res = await fetch(URL + '/rest/v1/' + TABLE, {
-      method: 'POST',
-      headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
-      body: JSON.stringify({ name: name, score: score }),
-    });
-    return res.ok;
+    try {
+      const res = await fetch(URL + '/rest/v1/rpc/submit_dart_score', {
+        method: 'POST',
+        headers: headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ p_token: playToken || '', p_name: name, p_score: score }),
+      });
+      if (!res.ok) return 'network';
+      const r = await res.json();
+      return typeof r === 'string' ? r : 'network';
+    } catch (e) { return 'network'; }
   }
   async function topScores(limit) {
     const url = URL + '/rest/v1/' + TABLE + '?select=name,score&order=score.desc,created_at.asc&limit=' + (limit || LIMIT);
@@ -187,17 +205,20 @@
     nameInput.value = name;
     const score = window.Oneshot ? window.Oneshot.getScore() : 0;
     if (!ready) { openBoard({ name: name, score: score, rank: null }); return; }
+    if (!playToken) { setMsg('연결 문제로 등록할 수 없어요. 새로고침 후 다시 시도해주세요.'); return; }
     submitBtn.disabled = true;
     setMsg('등록 중…');
-    try {
-      const ok = await submitScore(name, score);
-      if (!ok) { setMsg('등록 실패 — 잠시 후 다시 시도해주세요'); submitBtn.disabled = false; return; }
+    let result;
+    try { result = await submitScore(name, score); } catch (e) { result = 'network'; }
+    if (result === 'ok') {
       let rank = null;
       try { rank = await rankOf(score); } catch (e) {}
       openBoard({ name: name, score: score, rank: rank });
-    } catch (e) {
-      setMsg('네트워크 오류 — 다시 시도해주세요');
-      submitBtn.disabled = false;
+    } else if (result === 'network') {
+      setMsg('네트워크 오류 — 다시 시도해주세요'); submitBtn.disabled = false;
+    } else {
+      // 서버 검증 거부 → 비정상 접근/점수
+      setMsg('⚠️ 비정상 점수로 판단되어 랭킹에 반영되지 않았어요'); submitBtn.disabled = false;
     }
   });
 
@@ -230,6 +251,7 @@
   window.Leaderboard = {
     ready: ready,
     isOpen: function () { return !panelBoard.classList.contains('hidden'); },
+    onStart: function () { fetchToken(); },   // 게임 시작 시 서버에서 플레이 토큰 발급
     onOver: function () {
       nameInput.value = randomName();   // 매 게임오버마다 새 랜덤 닉네임
       submitBtn.disabled = false;
