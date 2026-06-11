@@ -113,7 +113,7 @@ drop function if exists public.submit_dart_score(text, text, int);
 create or replace function public.submit_dart_score(p_token text, p_name text, p_score int, p_throws int default null)
 returns text language plpgsql security definer set search_path = public, extensions as $fn$
 declare parts text[]; sid uuid; iat bigint; sig text; secret text; expect text;
-        elapsed_ms bigint; max_pps int := 400; abs_cap int := 50000; nm text; v_flag boolean := false;
+        elapsed_ms bigint; max_pps int := 2000; abs_cap int := 500000; nm text; v_flag boolean := false;
 begin
   parts := string_to_array(coalesce(p_token,''), ':');
   if coalesce(array_length(parts,1),0) <> 3 then return 'bad_token'; end if;
@@ -127,16 +127,13 @@ begin
   exception when unique_violation then return 'used'; end;        -- 재사용 방지
   elapsed_ms := (extract(epoch from now())*1000)::bigint - iat;
   if elapsed_ms < 1500 then return 'too_fast'; end if;            -- 즉시 제출 차단
-  if elapsed_ms > 3600000 then return 'expired'; end if;
-  if p_score < 0 or p_score > abs_cap then return 'implausible'; end if;            -- 절대 상한(말도 안 되는 점수)
-  if p_score > (max_pps * (elapsed_ms/1000.0)) then return 'implausible'; end if;   -- 시간당 타당성
-  -- 상품(1만점+) 구간: 사람이 낼 수 없는 패턴이면 자동 의심 플래그(띠지 격리·검토 대상). 제출 자체는 허용.
-  if p_score >= 10000 and elapsed_ms > 0 then
-    if p_score::numeric / (elapsed_ms/1000.0) > 300 then v_flag := true; end if;    -- 평균 초당점수 과다(대기 최소화 위조)
-    if p_throws is not null and p_throws > 0 then
-      if p_score::numeric / p_throws > 600 then v_flag := true; end if;             -- 던지기당 평균 과다
-      if (p_throws::numeric * 500) > elapsed_ms then v_flag := true; end if;        -- 던지기 수가 시간 대비 불가능
-    end if;
+  if elapsed_ms > 10800000 then return 'expired'; end if;          -- 3시간(긴 정밀 플레이 허용)
+  if p_score < 0 or p_score > abs_cap then return 'implausible'; end if;            -- 절대 상한 50만(정상 고득점 5만+도 허용)
+  if p_score > (max_pps * (elapsed_ms/1000.0)) then return 'implausible'; end if;   -- 초당 2000점(즉시 위조만 차단)
+  -- 자동 의심 플래그: 던지기 수로도 물리적으로 불가능한 점수만(한 발 최대 2400점). 정상 실력 플레이는 절대 안 걸림.
+  -- (점수 크기·속도 기반 플래그는 정상 고득점 5만+를 오판해 제거 — 상품은 verified 사람확인으로 보호)
+  if p_score >= 10000 and p_throws is not null and p_throws > 0 and p_score > p_throws * 2400 then
+    v_flag := true;
   end if;
   nm := left(regexp_replace(coalesce(btrim(p_name),''), '[[:cntrl:]<>]', '', 'g'), 20);  -- 서버측 위생(제어문자·<> 제거)
   if nm = '' then nm := '익명'; end if;
